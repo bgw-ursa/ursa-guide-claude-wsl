@@ -232,40 +232,8 @@ wsl --set-version Ubuntu 2
 
 ---
 id: step2
-nav: 2. Restrict Windows access
+nav: 2. Place the repo
 step: 2
-title: Restrict WSL's access to Windows
-lead: By default, every Linux user — including the `claude` account you'll create next — can read your Windows drives under `/mnt/c` and launch Windows programs as your Windows user. These settings close both paths.
----
-
-```bash title="WSL — your normal user"
-sudo nano /etc/wsl.conf
-```
-
-Add these sections, keeping anything already in the file (for example `[boot]` or `[user]`):
-
-```ini title="/etc/wsl.conf"
-[automount]
-options = "metadata,umask=077"
-
-[interop]
-enabled = false
-appendWindowsPath = false
-```
-
-Restart WSL so the changes take effect, then reopen Ubuntu:
-
-```powershell title="PowerShell"
-wsl --shutdown
-```
-
-> [!NOTE]
-> With interop disabled, WSL can no longer launch Windows programs. Commands such as `code .` and `explorer.exe .` stop working from the Ubuntu terminal. To edit in VS Code, open the folder from the Windows side instead (WSL extension → **Connect to WSL**).
-
----
-id: step3
-nav: 3. Place the repo
-step: 3
 title: Keep the repository on the Linux filesystem
 lead: Use your WSL home directory rather than `/mnt/c/...`. Cross-boundary file access is commonly 5–10× slower and can degrade Claude Code file search, dependency installs, and builds.
 ---
@@ -279,9 +247,9 @@ git clone <YOUR_REPOSITORY_URL> {{REPO}}
 ```
 
 ---
-id: step4
-nav: 4. Create agent user
-step: 4
+id: step3
+nav: 3. Create agent user
+step: 3
 title: Create the shared group and low-privilege agent user
 lead: The shared group lets your normal account and the `claude` account both edit the repository without granting broader access. This is simpler and generally more reliable than per-user POSIX ACLs, which can develop mask-related permission surprises when build tools create files.
 ---
@@ -316,9 +284,9 @@ source ~/.bashrc
 ```
 
 ---
-id: step5
-nav: 5. Share repo access
-step: 5
+id: step4
+nav: 4. Share repo access
+step: 4
 title: Grant both accounts access to the repository
 ---
 
@@ -363,9 +331,9 @@ sudo -u claude git config --global --add safe.directory /home/{{USERNAME}}/git/{
 ```
 
 ---
-id: step6
-nav: 6. Install Claude Code
-step: 6
+id: step5
+nav: 5. Install Claude Code
+step: 5
 title: Install Claude Code as the agent user
 lead: The native installer avoids Node.js/npm path issues, installs a self-contained binary, and updates automatically in the background.
 ---
@@ -384,9 +352,9 @@ claude --version
 > **Do not** run the installer or the `claude` command with `sudo`. The agent should run as the non-root `claude` user. Claude Code's bypass-permissions mode is also blocked for root.
 
 ---
-id: step7
-nav: 7. Enable sandbox
-step: 7
+id: step6
+nav: 6. Enable sandbox
+step: 6
 title: Enable the sandbox
 lead: The dependency installation and system configuration require your normal sudo-enabled account. Exit the `claude` shell first.
 ---
@@ -422,7 +390,7 @@ cd /home/{{USERNAME}}/git/{{REPO}}
 claude
 ```
 
-The first run opens an Anthropic sign-in flow. Because interop is disabled, the browser won't open on its own: copy the URL Claude Code prints into your Windows browser, then paste the code it gives you back into the terminal. This authentication belongs to the `claude` Linux account and is stored in that user's home directory.
+The first run opens an Anthropic sign-in flow. In WSL, the browser commonly opens on Windows and gives you a code to paste back into the terminal. This authentication belongs to the `claude` Linux account and is stored in that user's home directory.
 
 Inside Claude Code, run:
 
@@ -436,6 +404,46 @@ The sandbox panel reports whether `ripgrep`, `bubblewrap`, `socat`, and the opti
 - **Regular permissions:** the sandbox remains enabled, but each command still prompts.
 
 The sandbox grants read/write access to the working directory and routes network access through an allowlist proxy.
+
+---
+id: step7
+nav: 7. Lock down WSL
+step: 7
+title: Restrict Windows access and make claude the default user
+lead: By default, every Linux user — including the `claude` account — can read your Windows drives under `/mnt/c` and launch Windows programs as your Windows user. These settings close both paths and make WSL open as `claude` instead of your sudo-enabled account.
+---
+
+```bash title="WSL — your normal user"
+sudo nano /etc/wsl.conf
+```
+
+removeMe
+
+Add these sections. Keep any other sections already in the file (for example `[boot]`); if it already has a `[user]` section, change its `default` line rather than adding a second one:
+
+```ini title="/etc/wsl.conf"
+[automount]
+options = "metadata,umask=077"
+
+[interop]
+enabled = false
+appendWindowsPath = false
+
+[user]
+default=claude
+```
+
+Restart WSL so the changes take effect, then reopen Ubuntu. You'll now be signed in as `claude`:
+
+```powershell title="PowerShell"
+wsl --shutdown
+```
+
+> [!TIP]
+> For admin work later, open your normal account from PowerShell with `wsl -u {{USERNAME}}`.
+
+> [!NOTE]
+> With interop disabled, WSL can no longer launch Windows programs. Commands such as `code .` and `explorer.exe .` stop working from the Ubuntu terminal. To edit in VS Code, open the folder from the Windows side instead (WSL extension → **Connect to WSL**).
 
 ---
 id: step8
