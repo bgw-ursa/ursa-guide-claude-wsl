@@ -232,8 +232,40 @@ wsl --set-version Ubuntu 2
 
 ---
 id: step2
-nav: 2. Place the repo
+nav: 2. Restrict Windows access
 step: 2
+title: Restrict WSL's access to Windows
+lead: By default, every Linux user — including the `claude` account you'll create next — can read your Windows drives under `/mnt/c` and launch Windows programs as your Windows user. These settings close both paths.
+---
+
+```bash title="WSL — your normal user"
+sudo nano /etc/wsl.conf
+```
+
+Add these sections, keeping anything already in the file (for example `[boot]` or `[user]`):
+
+```ini title="/etc/wsl.conf"
+[automount]
+options = "metadata,umask=077"
+
+[interop]
+enabled = false
+appendWindowsPath = false
+```
+
+Restart WSL so the changes take effect, then reopen Ubuntu:
+
+```powershell title="PowerShell"
+wsl --shutdown
+```
+
+> [!NOTE]
+> With interop disabled, WSL can no longer launch Windows programs. Commands such as `code .` and `explorer.exe .` stop working from the Ubuntu terminal. To edit in VS Code, open the folder from the Windows side instead (WSL extension → **Connect to WSL**).
+
+---
+id: step3
+nav: 3. Place the repo
+step: 3
 title: Keep the repository on the Linux filesystem
 lead: Use your WSL home directory rather than `/mnt/c/...`. Cross-boundary file access is commonly 5–10× slower and can degrade Claude Code file search, dependency installs, and builds.
 ---
@@ -247,9 +279,9 @@ git clone <YOUR_REPOSITORY_URL> {{REPO}}
 ```
 
 ---
-id: step3
-nav: 3. Create agent user
-step: 3
+id: step4
+nav: 4. Create agent user
+step: 4
 title: Create the shared group and low-privilege agent user
 lead: The shared group lets your normal account and the `claude` account both edit the repository without granting broader access. This is simpler and generally more reliable than per-user POSIX ACLs, which can develop mask-related permission surprises when build tools create files.
 ---
@@ -284,9 +316,9 @@ source ~/.bashrc
 ```
 
 ---
-id: step4
-nav: 4. Share repo access
-step: 4
+id: step5
+nav: 5. Share repo access
+step: 5
 title: Grant both accounts access to the repository
 ---
 
@@ -331,9 +363,9 @@ sudo -u claude git config --global --add safe.directory /home/{{USERNAME}}/git/{
 ```
 
 ---
-id: step5
-nav: 5. Install Claude Code
-step: 5
+id: step6
+nav: 6. Install Claude Code
+step: 6
 title: Install Claude Code as the agent user
 lead: The native installer avoids Node.js/npm path issues, installs a self-contained binary, and updates automatically in the background.
 ---
@@ -352,9 +384,9 @@ claude --version
 > **Do not** run the installer or the `claude` command with `sudo`. The agent should run as the non-root `claude` user. Claude Code's bypass-permissions mode is also blocked for root.
 
 ---
-id: step6
-nav: 6. Enable sandbox
-step: 6
+id: step7
+nav: 7. Enable sandbox
+step: 7
 title: Enable the sandbox
 lead: The dependency installation and system configuration require your normal sudo-enabled account. Exit the `claude` shell first.
 ---
@@ -390,7 +422,7 @@ cd /home/{{USERNAME}}/git/{{REPO}}
 claude
 ```
 
-The first run opens an Anthropic sign-in flow. In WSL, the browser commonly opens on Windows and gives you a code to paste back into the terminal. This authentication belongs to the `claude` Linux account and is stored in that user's home directory.
+The first run opens an Anthropic sign-in flow. Because interop is disabled, the browser won't open on its own: copy the URL Claude Code prints into your Windows browser, then paste the code it gives you back into the terminal. This authentication belongs to the `claude` Linux account and is stored in that user's home directory.
 
 Inside Claude Code, run:
 
@@ -406,9 +438,9 @@ The sandbox panel reports whether `ripgrep`, `bubblewrap`, `socat`, and the opti
 The sandbox grants read/write access to the working directory and routes network access through an allowlist proxy.
 
 ---
-id: step7
-nav: 7. Day-to-day use
-step: 7
+id: step8
+nav: 8. Day-to-day use
+step: 8
 title: Day-to-day use
 ---
 
@@ -439,6 +471,7 @@ title: Notes and gotchas
 - **Do not run Claude Code from native PowerShell.** The Linux sandbox described here does not apply there.
 - **Build-tool permissions should remain stable.** Setgid plus `umask 002` keeps files created by tools such as `npm install` and Next.js builds group-writable. Because this setup uses group inheritance rather than ACLs, there is no ACL mask to collapse and usually nothing to repair afterward.
 - **Enterprise enforcement is possible.** Organization administrators can centrally require the sandbox rather than leaving it as a per-developer choice, using managed settings such as `enabled` and `failIfUnavailable`.
+- **Windows Git Credential Manager won't work from WSL.** With interop disabled, a Git `credential.helper` that points at the Windows `git-credential-manager.exe` can't run. Use SSH keys or a Linux-side credential helper instead.
 - **Usage limits are shared.** CLI, desktop, and web sessions draw from the same account usage allowance.
 
 ---
