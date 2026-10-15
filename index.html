@@ -417,20 +417,39 @@ lead: By default, every Linux user — including the `claude` account — can re
 sudo nano /etc/wsl.conf
 ```
 
-removeMe
-
 Add these sections. Keep any other sections already in the file (for example `[boot]`); if it already has a `[user]` section, change its `default` line rather than adding a second one:
 
-```ini title="/etc/wsl.conf"
-[automount]
-options = "metadata,umask=077"
-
-[interop]
-enabled = false
-appendWindowsPath = false
+```bash title="/etc/wsl.conf"
+[boot]
+systemd=true #can fail when other WSL instances are running
 
 [user]
-default=claude
+default=claude 
+
+# Must be the designated, hardened claude user, 
+# othewise Win Desktop Claude Code,
+# will have the other/normal/standard user's perms
+
+[automount]
+enabled = false
+options = "metadata,umask=777" 
+
+# Default user is claude. If human user needs to access /mnt/c, then try 707. 
+# 707 will disallow default/claude user, 
+# while allow others in the group and denies those outside of group. 
+# Assumption: claude and human are same group
+# Note that the claude group (agentic) must be 1000. 
+# In our current config, it winds up being 1001 and that won't work; 
+# all users still denied. 
+
+
+[interop]
+appendWindowsPath = false 
+enabled = true 
+
+# When disabled, "code" command for vsCode in WSL will NOT launch VS Code in Windows. 
+# Claude agent spawn from Win Claude Desktop will also fail.
+
 ```
 
 Restart WSL so the changes take effect, then reopen Ubuntu. You'll now be signed in as `claude`:
