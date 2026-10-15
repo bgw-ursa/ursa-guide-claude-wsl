@@ -212,20 +212,32 @@ title: Install WSL2 from Windows
 lead: Open **PowerShell as Administrator**.
 ---
 
+List the distributions available to install:
+
 ```powershell title="PowerShell"
-wsl --install
+wsl.exe --list --online
+```
+
+Install Ubuntu 26.04:
+
+```powershell title="PowerShell"
+wsl.exe --install Ubuntu-26.04
 ```
 
 Reboot when prompted, then choose a local username and password for Ubuntu.
 
-Confirm the distribution is using WSL 2:
-
-```powershell title="PowerShell"
-wsl -l -v
-
-# Only if Ubuntu shows VERSION 1:
-wsl --set-version Ubuntu 2
-```
+> [!NOTE]
+> **Optional — if something fails later:** new distributions install as WSL 2 by default. To confirm, check the VERSION column:
+>
+> ```powershell title="PowerShell"
+> wsl -l -v
+> ```
+>
+> Only if Ubuntu-26.04 shows VERSION 1, convert it:
+>
+> ```powershell title="PowerShell"
+> wsl --set-version Ubuntu-26.04 2
+> ```
 
 > [!TIP]
 > Everything after this step runs inside the Ubuntu / WSL terminal unless the guide explicitly says otherwise.
