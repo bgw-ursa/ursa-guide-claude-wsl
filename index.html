@@ -365,8 +365,125 @@ claude --version
 
 ---
 id: step6
-nav: 6. Enable sandbox
+nav: 6. Lock down network
 step: 6
+title: Restrict the agent user's network access
+lead: Route all of the `claude` account's outbound traffic through a Squid proxy that allows only listed domains, and use iptables to reject everything else. These commands require your normal sudo-enabled account. Exit the `claude` shell first.
+---
+
+### Install iptables
+
+iptables is not part of WSL by default.
+
+```bash title="WSL — return to your normal user"
+exit
+sudo apt update && sudo apt install -y iptables
+```
+
+Confirm owner-match support and that the OUTPUT chain loads:
+
+```bash title="WSL — your normal user"
+sudo iptables -m owner --help | head -3
+sudo iptables -L OUTPUT -n                 # should print an empty OUTPUT chain, no errors
+```
+
+> [!NOTE]
+> If the second command fails with an error such as `Failed to initialize nft` or `table does not exist`, the WSL kernel doesn't support the nftables backend Ubuntu uses by default. Switching to the legacy backend (`iptables-legacy` via `update-alternatives`) may work, but it is untested here; research it before proceeding.
+
+### Install and configure Squid
+
+```bash title="WSL — your normal user"
+sudo apt install -y squid
+```
+
+```bash title="WSL — your normal user"
+sudo tee /etc/squid/squid.conf >/dev/null <<'EOF'
+http_port 127.0.0.1:3128
+acl allowed dstdomain "/etc/squid/allowed-domains.txt"
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+http_access deny CONNECT !SSL_ports
+http_access allow localhost allowed
+http_access deny all
+cache deny all
+EOF
+```
+
+The allowlist starts with only the domains Claude Code needs. Uncomment others as your workflow requires them:
+
+```bash title="WSL — your normal user"
+sudo tee /etc/squid/allowed-domains.txt >/dev/null <<'EOF'
+.anthropic.com
+.claude.ai
+.claude.com
+#.github.com
+#.githubusercontent.com
+#registry.npmjs.org
+#pypi.org
+#files.pythonhosted.org
+EOF
+```
+
+Validate the configuration and restart Squid:
+
+```bash title="WSL — your normal user"
+sudo squid -k parse && sudo service squid restart
+```
+
+### Add iptables rules for the `claude` user
+
+```bash title="WSL — your normal user"
+for ipt in iptables ip6tables; do
+  sudo $ipt -N CLAUDE_OUT 2>/dev/null || sudo $ipt -F CLAUDE_OUT   # create, or empty if it exists
+  sudo $ipt -A CLAUDE_OUT -o lo -j ACCEPT          # loopback: Squid, local dev servers
+  sudo $ipt -A CLAUDE_OUT -j REJECT                # everything else, including DNS
+  sudo $ipt -C OUTPUT -m owner --uid-owner claude -j CLAUDE_OUT 2>/dev/null \
+    || sudo $ipt -A OUTPUT -m owner --uid-owner claude -j CLAUDE_OUT   # add the jump only once
+done
+```
+
+Blocking DNS is deliberate. Squid resolves names itself, so `claude` never needs DNS, and blocking it closes DNS tunneling as an exfiltration path.
+
+> [!NOTE]
+> Allowing all loopback traffic lets `claude` reach any local service, including one that forwards traffic out. You can tighten it to `-p tcp --dport 3128` later.
+
+### Persist the rules
+
+```bash title="WSL — your normal user"
+sudo apt install iptables-persistent
+```
+
+```bash title="WSL — your normal user"
+sudo netfilter-persistent save
+```
+
+> [!NOTE]
+> The saved rules and Squid start automatically at boot once systemd is enabled in Step 8. After any change to the rules, run `sudo netfilter-persistent save` again.
+
+### Point `claude`'s tools at the proxy
+
+```bash title="WSL — switch to claude"
+sudo -iu claude
+```
+
+```bash title="WSL — as claude"
+tee -a ~/.bashrc >/dev/null <<'EOF'
+export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128
+export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
+export NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1
+EOF
+```
+
+> [!NOTE]
+> These variables only make things work; they don't enforce anything. If `claude` removes them, its traffic hits the REJECT rule instead of getting out.
+
+> [!TIP]
+> Restart the profile with `source ~/.bashrc`, or open a new `claude` shell, so the variables take effect.
+
+---
+id: step7
+nav: 7. Enable sandbox
+step: 7
 title: Enable the sandbox
 lead: The dependency installation and system configuration require your normal sudo-enabled account. Exit the `claude` shell first.
 ---
@@ -394,6 +511,32 @@ sudo sysctl --system
 > [!WARNING]
 > This relaxes a system-wide hardening setting. On a dedicated development machine that may be an acceptable tradeoff. A targeted AppArmor profile for Bubblewrap is the more surgical option.
 
+### Enforce the sandbox with managed settings
+
+Create a root-owned managed settings file so Claude Code always runs sandboxed. Because `claude` has no sudo access, it can't change or remove this policy:
+
+```bash title="WSL — your normal user"
+sudo mkdir -p /etc/claude-code
+sudo tee /etc/claude-code/managed-settings.json >/dev/null <<'EOF'
+{
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:3128",
+    "HTTP_PROXY": "http://127.0.0.1:3128",
+    "NO_PROXY": "localhost,127.0.0.1"
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "httpProxyPort": 3128
+    }
+  }
+}
+EOF
+```
+
 ### Start Claude Code in the repository
 
 ```bash title="WSL — switch to claude"
@@ -418,9 +561,9 @@ The sandbox panel reports whether `ripgrep`, `bubblewrap`, `socat`, and the opti
 The sandbox grants read/write access to the working directory and routes network access through an allowlist proxy.
 
 ---
-id: step7
-nav: 7. Lock down WSL
-step: 7
+id: step8
+nav: 8. Lock down WSL
+step: 8
 title: Restrict Windows access and make claude the default user
 lead: By default, every Linux user — including the `claude` account — can read your Windows drives under `/mnt/c` and launch Windows programs as your Windows user. These settings close both paths and make WSL open as `claude` instead of your sudo-enabled account.
 ---
@@ -477,9 +620,9 @@ wsl --shutdown
 > With interop disabled, WSL can no longer launch Windows programs. Commands such as `code .` and `explorer.exe .` stop working from the Ubuntu terminal. To edit in VS Code, open the folder from the Windows side instead (WSL extension → **Connect to WSL**).
 
 ---
-id: step8
-nav: 8. Day-to-day use
-step: 8
+id: step9
+nav: 9. Day-to-day use
+step: 9
 title: Day-to-day use
 ---
 
@@ -915,7 +1058,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
         '<h2 id="wsl-guide-config-title">Customize this guide</h2>' +
         '<p class="config-note">Change these values once. Every affected path and command below updates automatically.</p>' +
         '<div class="fields">' +
-          '<label>Windows / WSL username<input data-field="username" spellcheck="false" autocomplete="off"></label>' +
+          '<label>WSL username<input data-field="username" spellcheck="false" autocomplete="off"></label>' +
           '<label>Repository name<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
         '</div>' +
         '<div class="path-preview">Resolved repository path: <strong data-path-preview></strong></div>' +
