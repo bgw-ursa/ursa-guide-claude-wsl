@@ -617,12 +617,98 @@ wsl --shutdown
 > For admin work later, open your normal account from PowerShell with `wsl -u {{USERNAME}}`.
 
 > [!NOTE]
-> With interop disabled, WSL can no longer launch Windows programs. Commands such as `code .` and `explorer.exe .` stop working from the Ubuntu terminal. To edit in VS Code, open the folder from the Windows side instead (WSL extension → **Connect to WSL**).
+> Don't open the repository with VS Code's WSL extension or with `code .` from the Ubuntu terminal; both connect as `claude`. Use Remote - SSH as your normal user instead (Step 9).
 
 ---
 id: step9
-nav: 9. Day-to-day use
+nav: 9. Connect VS Code
 step: 9
+title: Connect VS Code as your normal user
+lead: WSL now opens as `claude`, so VS Code's WSL extension would connect as `claude` too, and your edits and commits would be made as the agent. Connecting over SSH instead makes VS Code act as your normal account, so files and commits are yours.
+---
+
+> [!NOTE]
+> Install [VS Code](https://code.visualstudio.com/) on Windows first if you don't already have it.
+
+### Run an SSH server in WSL
+
+The server listens only on `127.0.0.1:2222`, accepts key logins only, and admits only your normal account. Open WSL as that account:
+
+```powershell title="PowerShell"
+wsl -u {{USERNAME}}
+```
+
+```bash title="WSL — your normal user"
+sudo apt update && sudo apt install -y openssh-server
+```
+
+```bash title="WSL — your normal user"
+sudo tee /etc/ssh/sshd_config.d/10-wsl.conf >/dev/null <<'EOF'
+Port 2222
+ListenAddress 127.0.0.1
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowUsers {{USERNAME}}
+EOF
+```
+
+Ubuntu starts SSH on demand through `ssh.socket` by default. Switch to the always-on `ssh` service, then confirm it is listening on `127.0.0.1:2222`:
+
+```bash title="WSL — your normal user"
+sudo systemctl disable --now ssh.socket 2>/dev/null
+sudo systemctl enable --now ssh
+ss -tlnp | grep 2222
+```
+
+### Create an SSH key on Windows
+
+A passphrase is recommended.
+
+```powershell title="PowerShell"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
+ssh-keygen -t ed25519 -C "$env:USERNAME-vscode" -f "$env:USERPROFILE\.ssh\wsl-vscode"
+```
+
+### Authorize the key in WSL
+
+Step 8 removed `/mnt/c`, so WSL can no longer read the key from your Windows profile. Pipe it in from PowerShell instead:
+
+```powershell title="PowerShell"
+Get-Content "$env:USERPROFILE\.ssh\wsl-vscode.pub" | wsl -u {{USERNAME}} --exec sh -c 'mkdir -p /home/{{USERNAME}}/.ssh && chmod 700 /home/{{USERNAME}}/.ssh && tr -d \\r >> /home/{{USERNAME}}/.ssh/authorized_keys && chmod 600 /home/{{USERNAME}}/.ssh/authorized_keys'
+```
+
+### Add an SSH host entry on Windows
+
+```powershell title="PowerShell"
+Add-Content "$env:USERPROFILE\.ssh\config" @"
+
+Host wsl
+  HostName 127.0.0.1
+  Port 2222
+  User {{USERNAME}}
+  IdentityFile ~/.ssh/wsl-vscode
+"@
+```
+
+Test the connection. Accept the host fingerprint on first connect; the command should print your normal username:
+
+```powershell title="PowerShell"
+ssh wsl whoami
+```
+
+### Install Remote - SSH and connect
+
+```powershell title="PowerShell"
+code --install-extension ms-vscode-remote.remote-ssh
+```
+
+In VS Code, open the Command Palette, run **Remote-SSH: Connect to Host…**, and choose `wsl`. Then use **File → Open Folder** to open `/home/{{USERNAME}}/git/{{REPO}}`.
+
+---
+id: step10
+nav: 10. Day-to-day use
+step: 10
 title: Day-to-day use
 ---
 
