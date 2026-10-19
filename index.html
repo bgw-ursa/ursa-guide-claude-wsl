@@ -215,7 +215,13 @@ title: Install WSL2 from Windows
 lead: Open **PowerShell as Administrator**.
 ---
 
-List the distributions available to install:
+Install WSL itself, without a Linux distribution:
+
+```powershell title="PowerShell"
+wsl.exe --install --no-distribution
+```
+
+Reboot if prompted, then list the distributions available to install:
 
 ```powershell title="PowerShell"
 wsl.exe --list --online
@@ -228,6 +234,9 @@ wsl.exe --install Ubuntu-26.04
 ```
 
 Reboot when prompted, then choose a local username and password for Ubuntu.
+
+> [!TIP]
+> Ubuntu asks for the username and password in the terminal window when it first starts, not in a separate Windows dialog. Use the same username you entered as **WSL username** under **Customize this guide** so the commands below match. You may consider a shorter name for ease of keyboard entry.
 
 > [!NOTE]
 > **Optional — if something fails later:** new distributions install as WSL 2 by default. To confirm, check the VERSION column:
@@ -280,10 +289,16 @@ sudo useradd -m -s /bin/bash -G agentic claude
 sudo usermod -aG agentic "$USER"
 ```
 
-Log out and back in so the new group membership takes effect. For the current shell only, you can instead run:
+Restart WSL so the new group membership takes effect. Close all Ubuntu terminals, then run this in PowerShell:
 
-```bash title="WSL"
-newgrp agentic
+```powershell title="PowerShell"
+wsl --shutdown
+```
+
+Reopen Ubuntu and confirm `agentic` appears in your groups:
+
+```bash title="WSL — your normal user"
+id -nG | grep -w agentic
 ```
 
 ### Block the `claude` command on your main account
@@ -355,7 +370,9 @@ lead: The native installer avoids Node.js/npm path issues, installs a self-conta
 
 ```bash title="WSL — switch to claude"
 sudo -iu claude
+```
 
+```bash title="WSL — as claude"
 curl -fsSL https://claude.ai/install.sh | bash
 
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -380,6 +397,9 @@ iptables is not part of WSL by default.
 
 ```bash title="WSL — return to your normal user"
 exit
+```
+
+```bash title="WSL — your normal user"
 sudo apt update && sudo apt install -y iptables
 ```
 
@@ -493,6 +513,9 @@ lead: The dependency installation and system configuration require your normal s
 
 ```bash title="WSL — return to your normal user"
 exit
+```
+
+```bash title="WSL — your normal user"
 sudo apt update
 sudo apt install -y bubblewrap socat
 ```
@@ -544,6 +567,9 @@ EOF
 
 ```bash title="WSL — switch to claude"
 sudo -iu claude
+```
+
+```bash title="WSL — as claude"
 cd /home/{{USERNAME}}/git/{{REPO}}
 claude
 ```
@@ -562,6 +588,20 @@ The sandbox panel reports whether `ripgrep`, `bubblewrap`, `socat`, and the opti
 - **Regular permissions:** the sandbox remains enabled, but each command still prompts.
 
 The sandbox grants read/write access to the working directory and routes network access through an allowlist proxy.
+
+### Return to your normal user
+
+The next step needs your sudo-enabled account. First quit Claude Code:
+
+```text title="Claude Code"
+/exit
+```
+
+Then leave the `claude` shell:
+
+```bash title="WSL — return to your normal user"
+exit
+```
 
 ---
 id: step8
