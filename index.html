@@ -70,7 +70,7 @@ body { margin: 0; background: #f5f7fb; }
 }
 .wsl-guide .config h2 { margin: 0 0 4px; font-size: 1.25rem; }
 .wsl-guide .config-note { color: var(--muted); margin: 0 0 16px; }
-.wsl-guide .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.wsl-guide .fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .wsl-guide label { font-weight: 700; font-size: 0.9rem; }
 .wsl-guide input {
   width: 100%; margin-top: 6px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
@@ -178,7 +178,7 @@ body { margin: 0; background: #f5f7fb; }
      Supported: # headings, paragraphs, **bold**, *italic*, `code`, [links](url),
      - / 1. lists, - [x] checklists, > quotes, > [!NOTE] / [!TIP] / [!WARNING]
      callouts, ```lang title="Label" fenced code, and ---.
-     {{USERNAME}} {{USERNAME_UPPER}} {{USERNAME_LOWER}} {{REPO}} are replaced
+     {{USERNAME}} {{USERNAME_UPPER}} {{USERNAME_LOWER}} {{REPO}} {{GITHUB_USER}} are replaced
      with the reader's values.
 
      Keep the Markdown flush-left, and never type a closing script tag inside it.
@@ -218,13 +218,13 @@ lead: Open **PowerShell as Administrator**.
 Install WSL itself, without a Linux distribution:
 
 ```powershell title="PowerShell"
-wsl.exe --install --no-distribution
+wsl --install
 ```
 
 Reboot if prompted, then list the distributions available to install:
 
 ```powershell title="PowerShell"
-wsl.exe --list --online
+wsl --list --online
 ```
 
 Install Ubuntu 26.04:
@@ -773,6 +773,121 @@ cc
 ```
 
 ---
+id: new-forge
+nav: New-Forge setup
+title: New-Forge setup
+lead: Run these in WSL as your normal user, from the VS Code Remote-SSH terminal or `wsl -u {{USERNAME}}`. The GitHub key stays in your home directory, which the `claude` user can't read.
+---
+
+### Create a GitHub SSH key
+
+A passphrase is recommended.
+
+```bash title="WSL — your normal user"
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -C "{{GITHUB_USER}}@wsl" -f ~/.ssh/ursa-github
+```
+
+### Use the key for GitHub
+
+SSH only tries keys with default names on its own, so point GitHub connections at `ursa-github` explicitly:
+
+```bash title="WSL — your normal user"
+cat >> ~/.ssh/config <<'EOF'
+
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/ursa-github
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+```
+
+### Add the public key to GitHub
+
+Print the public key and copy the whole line:
+
+```bash title="WSL — your normal user"
+cat ~/.ssh/ursa-github.pub
+```
+
+In GitHub, signed in as `{{GITHUB_USER}}`, go to [Settings → SSH and GPG keys](https://github.com/settings/keys), choose **New SSH key**, and paste it.
+
+> [!NOTE]
+> If the Ursa GitHub organization uses single sign-on, choose **Configure SSO** next to the new key and authorize it for the organization.
+
+Test the connection. Accept the host fingerprint on first connect; GitHub should greet you as `{{GITHUB_USER}}`:
+
+```bash title="WSL — your normal user"
+ssh -T git@github.com
+```
+
+### Fork New-Forge
+
+On GitHub, fork the New-Forge repository into your personal Ursa account, `{{GITHUB_USER}}`.
+
+### Clone your fork
+
+```bash title="WSL — your normal user"
+cd ~/git
+git clone git@github.com:{{GITHUB_USER}}/new-forge.git
+```
+
+### Install the project dependencies
+
+Run `npm install` so the project and its scripts are usable:
+
+```bash title="WSL — your normal user"
+cd ~/git/new-forge
+npm install
+```
+
+> [!NOTE]
+> This needs Node.js and npm installed for your normal user.
+
+### Add AWS credentials
+
+Create a private AWS config folder in your home directory, outside the repository:
+
+```bash title="WSL — your normal user"
+mkdir -p ~/.aws
+chmod 700 ~/.aws
+```
+
+Open the credentials file:
+
+```bash title="WSL — your normal user"
+nano ~/.aws/credentials
+```
+
+Paste this profile, replacing the placeholder values with the access key ID and secret access key you were given:
+
+```ini title="~/.aws/credentials"
+[stock-data]
+aws_access_key_id = AKIAxxxxxxxxxxxxxxxx
+aws_secret_access_key = your-secret-access-key
+```
+
+Save and exit, then make the file readable only by you:
+
+```bash title="WSL — your normal user"
+chmod 600 ~/.aws/credentials
+```
+
+### Point the `fetch-stock-data` task at the new profile
+
+The project doesn't use the `stock-data` profile automatically yet. In VS Code, open `.vscode/tasks.json` in New-Forge, find the task labelled `fetch-stock-data`, and add this property to it. Add a comma after the property before it, and if the task already has an `options` block, add the `env` entry inside it instead:
+
+```json title=".vscode/tasks.json"
+"options": {
+  "env": {
+    "AWS_PROFILE": "stock-data"
+  }
+}
+```
+
+---
 id: gotchas
 nav: Notes & gotchas
 title: Notes and gotchas
@@ -862,6 +977,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
     description: "A readable, interactive setup guide using a dedicated low-privilege Linux user plus Claude Code's built-in sandbox.",
     defaultUsername: 'your-wsl-username',
     defaultRepo: 'your-repository',
+    defaultGithubUser: 'yourname-ursa',
   };
 
   var STORAGE_KEY = 'wslGuide.settings.v1';
@@ -1121,12 +1237,13 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
     return String(value || '').trim().replace(/[^A-Za-z0-9._-]/g, '') || fallback;
   }
 
-  function applyTemplate(html, username, repo) {
+  function applyTemplate(html, username, repo, githubUser) {
     return html
       .split('{{USERNAME_UPPER}}').join(username.toUpperCase())
       .split('{{USERNAME_LOWER}}').join(username.toLowerCase())
       .split('{{USERNAME}}').join(username)
-      .split('{{REPO}}').join(repo);
+      .split('{{REPO}}').join(repo)
+      .split('{{GITHUB_USER}}').join(githubUser);
   }
 
   function loadSettings() {
@@ -1158,10 +1275,10 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
     return ok;
   }
 
-  function sectionHtml(s, u, r) {
+  function sectionHtml(s, u, r, g) {
     var titleId = s.id + '-title';
     var title = '<h2 id="' + titleId + '">' + escapeHtml(s.title) + '</h2>';
-    var lead = s.leadHtml ? '<p>' + applyTemplate(s.leadHtml, u, r) + '</p>' : '';
+    var lead = s.leadHtml ? '<p>' + applyTemplate(s.leadHtml, u, r, g) + '</p>' : '';
     var head = s.step
       ? '<div class="step-header"><div class="step-number" aria-hidden="true">' + escapeHtml(s.step) + '</div>' +
         '<div>' + title + lead + '</div></div>'
@@ -1170,7 +1287,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
       '<section class="card' + (s.eyebrow ? ' appendix' : '') + '" id="' + s.id + '" data-section="' + s.id + '" aria-labelledby="' + titleId + '">' +
       (s.eyebrow ? '<div class="eyebrow appendix-eyebrow">' + escapeHtml(s.eyebrow) + '</div>' : '') +
       head +
-      '<div class="card-body">' + applyTemplate(s.html, u, r) + '</div>' +
+      '<div class="card-body">' + applyTemplate(s.html, u, r, g) + '</div>' +
       '</section>'
     );
   }
@@ -1189,6 +1306,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
         '<div class="fields">' +
           '<label>WSL username<input data-field="username" spellcheck="false" autocomplete="off"></label>' +
           '<label>Repository name<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
+          '<label>GitHub username<input data-field="github" spellcheck="false" autocomplete="off"></label>' +
         '</div>' +
         '<div class="path-preview">Resolved repository path: <strong data-path-preview></strong></div>' +
       '</section>' +
@@ -1201,6 +1319,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
   // Look things up inside the guide only, so nothing collides with the host page.
   var userInput = app.querySelector('[data-field="username"]');
   var repoInput = app.querySelector('[data-field="repo"]');
+  var githubInput = app.querySelector('[data-field="github"]');
   var pathPreview = app.querySelector('[data-path-preview]');
   var navEl = app.querySelector('[data-nav]');
   var mainEl = app.querySelector('[data-main]');
@@ -1222,6 +1341,7 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
   var stored = loadSettings();
   userInput.value = stored.username || CONFIG.defaultUsername;
   repoInput.value = stored.repo || CONFIG.defaultRepo;
+  githubInput.value = stored.githubUser || CONFIG.defaultGithubUser;
 
   navEl.innerHTML = sections.map(function (s) {
     return '<a href="#' + s.id + '" data-target="' + s.id + '">' + escapeHtml(s.nav) + '</a>';
@@ -1251,14 +1371,16 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
   function render() {
     var u = safeValue(userInput.value, CONFIG.defaultUsername);
     var r = safeValue(repoInput.value, CONFIG.defaultRepo);
+    var g = safeValue(githubInput.value, CONFIG.defaultGithubUser);
     pathPreview.textContent = '/home/' + u + '/git/' + r;
-    mainEl.innerHTML = sections.map(function (s) { return sectionHtml(s, u, r); }).join('');
-    saveSettings({ username: userInput.value, repo: repoInput.value });
+    mainEl.innerHTML = sections.map(function (s) { return sectionHtml(s, u, r, g); }).join('');
+    saveSettings({ username: userInput.value, repo: repoInput.value, githubUser: githubInput.value });
     observeSections();
   }
 
   userInput.addEventListener('input', render);
   repoInput.addEventListener('input', render);
+  githubInput.addEventListener('input', render);
 
   navEl.addEventListener('click', function (e) {
     var a = e.target.closest('a[data-target]');
