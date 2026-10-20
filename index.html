@@ -447,6 +447,24 @@ sudo tee /etc/squid/allowed-domains.txt >/dev/null <<'EOF'
 EOF
 ```
 
+> [!WARNING]
+> **Optional, evaluation period only: allow all domains.** While this WSL setup is being evaluated, you can open Squid to every domain instead of only the allowlist. This overwrites `/etc/squid/squid.conf`. The iptables rules below still force `claude`'s traffic through Squid, but Squid no longer filters it. Switch the two marked lines back to `deny` before production use.
+>
+> ```bash title="WSL — your normal user"
+> sudo tee /etc/squid/squid.conf >/dev/null <<'EOF'
+> http_port 127.0.0.1:3128
+> acl allowed dstdomain "/etc/squid/allowed-domains.txt"
+> acl SSL_ports port 443
+> acl CONNECT method CONNECT
+> http_access deny CONNECT !SSL_ports
+> http_access allow localhost allowed
+> # deny all for prod
+> http_access allow all
+> # deny all for prod
+> cache allow all
+> EOF
+> ```
+
 Validate the configuration and restart Squid:
 
 ```bash title="WSL — your normal user"
@@ -834,6 +852,31 @@ cd ~/git
 git clone git@github.com:{{GITHUB_USER}}/new-forge.git
 ```
 
+### Install Node.js with nvm
+
+Install Node.js with nvm (Node Version Manager) as your normal user, not with `sudo apt install nodejs npm`. nvm installs Node.js in your home directory, so installing npm packages never needs `sudo`, and you can switch Node.js versions easily. npm comes with Node.js, so there is no separate npm install.
+
+```bash title="WSL — your normal user"
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh | bash
+```
+
+Reload your shell so the `nvm` command is available, then install the current long-term-support release:
+
+```bash title="WSL — your normal user"
+source ~/.bashrc
+nvm install --lts
+```
+
+Confirm both are installed:
+
+```bash title="WSL — your normal user"
+node -v
+npm -v
+```
+
+> [!TIP]
+> If New-Forge has an `.nvmrc` file, run `nvm install` inside `~/git/new-forge` instead to get the exact version the project expects.
+
 ### Install the project dependencies
 
 Run `npm install` so the project and its scripts are usable:
@@ -842,9 +885,6 @@ Run `npm install` so the project and its scripts are usable:
 cd ~/git/new-forge
 npm install
 ```
-
-> [!NOTE]
-> This needs Node.js and npm installed for your normal user.
 
 ### Add AWS credentials
 
