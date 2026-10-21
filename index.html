@@ -509,8 +509,10 @@ Blocking DNS is deliberate. Squid resolves names itself, so `claude` never needs
 ### Persist the rules
 
 ```bash title="WSL — your normal user"
-sudo apt install iptables-persistent
+sudo DEBIAN_FRONTEND=noninteractive apt install -y iptables-persistent
 ```
+
+Then save the current rules:
 
 ```bash title="WSL — your normal user"
 sudo netfilter-persistent save
