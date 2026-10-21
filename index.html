@@ -649,13 +649,10 @@ title: Restrict Windows access and make claude the default user
 lead: By default, every Linux user — including the `claude` account — can read your Windows drives under `/mnt/c` and launch Windows programs as your Windows user. These settings close both paths and make WSL open as `claude` instead of your sudo-enabled account.
 ---
 
+Overwrite `/etc/wsl.conf` with these settings. This replaces anything already in the file:
+
 ```bash title="WSL — your normal user"
-sudo nano /etc/wsl.conf
-```
-
-Add these sections. Keep any other sections already in the file (for example `[boot]`); if it already has a `[user]` section, change its `default` line rather than adding a second one:
-
-```bash title="/etc/wsl.conf"
+sudo tee /etc/wsl.conf >/dev/null <<'EOF'
 [boot]
 systemd=true #can fail when other WSL instances are running
 
@@ -686,19 +683,25 @@ enabled = true
 # When disabled, "code" command for vsCode in WSL will NOT launch VS Code in Windows. 
 # Claude agent spawn from Win Claude Desktop will also fail.
 
+EOF
 ```
 
-Restart WSL so the changes take effect, then reopen Ubuntu. You'll now be signed in as `claude`:
+Restart WSL so the changes take effect. First exit the Ubuntu terminal:
+
+```bash title="WSL — your normal user"
+exit
+```
+
+Then, in PowerShell, shut WSL down:
 
 ```powershell title="PowerShell"
 wsl --shutdown
 ```
 
+Reopen Ubuntu/Linux by typing `wsl` in PowerShell. You'll now be signed in as `claude`.
+
 > [!TIP]
 > For admin work later, open your normal account from PowerShell with `wsl -u {{USERNAME}}`.
-
-> [!NOTE]
-> Don't open the repository with VS Code's WSL extension or with `code .` from the Ubuntu terminal; both connect as `claude`. Use Remote - SSH as your normal user instead (Step 9).
 
 ---
 id: step9
@@ -710,6 +713,9 @@ lead: WSL now opens as `claude`, so VS Code's WSL extension would connect as `cl
 
 > [!NOTE]
 > Install [VS Code](https://code.visualstudio.com/) on Windows first if you don't already have it.
+
+> [!WARNING]
+> Don't open the repository with VS Code's WSL extension or with `code .` from the Ubuntu terminal; both connect as `claude`. Use Remote - SSH as your normal user, set up below.
 
 ### Run an SSH server in WSL
 
