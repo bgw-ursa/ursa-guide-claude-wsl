@@ -185,6 +185,24 @@ body { margin: 0; background: #f5f7fb; }
      ===================================================================== -->
 <script type="text/markdown">
 ---
+id: intro
+nav: Introduction
+title: About this guide
+---
+
+This guide sets up Anthropic's Claude Desktop app on Windows so that its Claude Code agent runs sandboxed inside WSL (Linux) rather than directly on Windows. Regular Claude chat in the app is not affected.
+
+It also covers:
+
+- Installing Microsoft VS Code on Windows.
+- Cloning Ursa GitHub repositories from GitHub into the WSL filesystem.
+
+When you're done, two accounts share the work:
+
+- **You** edit in VS Code, which connects to WSL over Remote-SSH as your own Linux user. Edits, commits, and GitHub access are yours.
+- **The Claude Code agent** runs in WSL as a separate, restricted `claude` user, limited to the repository you share with it and to approved network destinations.
+
+---
 id: overview
 nav: Overview
 title: What this setup protects
@@ -230,7 +248,7 @@ wsl --list --online
 Install Ubuntu 26.04:
 
 ```powershell title="PowerShell"
-wsl.exe --install Ubuntu-26.04
+wsl --install Ubuntu-26.04
 ```
 
 Reboot when prompted, then choose a local username and password for Ubuntu.
