@@ -750,7 +750,7 @@ ss -tlnp | grep 2222
 
 ### Create an SSH key on Windows
 
-A passphrase is recommended.
+When asked for a passphrase, press **Enter** twice to leave it empty. The key only opens connections to WSL on this computer (`127.0.0.1:2222`), so a passphrase adds little protection, and without one VS Code connects without prompting.
 
 ```powershell title="PowerShell"
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
