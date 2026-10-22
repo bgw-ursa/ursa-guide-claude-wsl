@@ -280,12 +280,58 @@ title: Keep the repository on the Linux filesystem
 lead: Use your WSL home directory rather than `/mnt/c/...`. Cross-boundary file access is commonly 5–10× slower and can degrade Claude Code file search, dependency installs, and builds.
 ---
 
+### Create a GitHub SSH key
+
+The key lives in your normal account's `~/.ssh`, which the `claude` user created later can't read. A passphrase is optional.
+
+```bash title="WSL — your normal user"
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -C "{{GITHUB_USER}}@wsl" -f ~/.ssh/ursa-github
+```
+
+> [!NOTE]
+> The `-C` value is just a label stored with the key, so you can later tell which key is which. Use any text that helps you recognize it. It plays no part in authentication: GitHub identifies you by the key itself, not by the label, your email, or your GitHub username.
+
+### Use the key for GitHub
+
+SSH only tries keys with default names on its own, so point GitHub connections at `ursa-github` explicitly:
+
+```bash title="WSL — your normal user"
+cat >> ~/.ssh/config <<'EOF'
+
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/ursa-github
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+```
+
+### Add the public key to GitHub
+
+Print the public key and copy the whole line:
+
+```bash title="WSL — your normal user"
+cat ~/.ssh/ursa-github.pub
+```
+
+In GitHub, signed in as `{{GITHUB_USER}}`, go to [Settings → SSH and GPG keys](https://github.com/settings/keys), choose **New SSH key**, and paste it.
+
+Test the connection. Accept the host fingerprint on first connect; GitHub should greet you as `{{GITHUB_USER}}`:
+
+```bash title="WSL — your normal user"
+ssh -T git@github.com
+```
+
+### Fork and clone the repository
+
+On GitHub, fork `{{REPO}}` into your personal Ursa account, `{{GITHUB_USER}}`. Then clone your fork into `~/git`:
+
 ```bash title="WSL — your normal user"
 mkdir -p ~/git
-
-# Clone the repository here, or move an existing clone here:
 cd ~/git
-git clone <YOUR_REPOSITORY_URL> {{REPO}}
+git clone git@github.com:{{GITHUB_USER}}/{{REPO}}.git
 ```
 
 ---
@@ -335,20 +381,20 @@ source ~/.bashrc
 id: step4
 nav: 4. Share repo access
 step: 4
-title: Grant both accounts access to the repository
+title: Grant both accounts access to your repositories
 ---
 
-```bash title="WSL — your normal user"
-cd ~/git
+These commands share `~/git`, the folder that holds all your repositories, not just `{{REPO}}`. They apply recursively to everything already in it, and any repository you clone into `~/git` later is shared with `claude` automatically. Keep any repository the agent must not touch outside `~/git`.
 
-# Group-own the repository tree
-sudo chgrp -R agentic {{REPO}}
+```bash title="WSL — your normal user"
+# Group-own ~/git and everything in it
+sudo chgrp -R agentic ~/git
 
 # Give the group read/write access. Capital X adds execute only where appropriate.
-sudo chmod -R g+rwX {{REPO}}
+sudo chmod -R g+rwX ~/git
 
-# New files and directories inherit the agentic group.
-sudo find {{REPO}} -type d -exec chmod g+s {} +
+# New files and directories, including future clones, inherit the agentic group.
+sudo find ~/git -type d -exec chmod g+s {} +
 ```
 
 ### Make new files group-writable by default
@@ -369,13 +415,12 @@ chmod o+x /home/{{USERNAME}}
 
 This grants traverse permission only; it does not let the `claude` user list your home directory contents.
 
-> [!NOTE]
-> **Cleaner alternative:** put the shared repository at `/srv/{{REPO}}`, group-own it with `agentic`, and skip the home-directory traversal command.
+### Mark the repositories as safe for Git
 
-### Mark the repository as safe for Git
+The trailing `/*` covers every repository in `~/git`, including future ones:
 
 ```bash title="WSL — your normal user"
-sudo -u claude git config --global --add safe.directory /home/{{USERNAME}}/git/{{REPO}}
+sudo -u claude git config --global --add safe.directory '/home/{{USERNAME}}/git/*'
 ```
 
 ---
@@ -793,90 +838,17 @@ code --install-extension ms-vscode-remote.remote-ssh
 In VS Code, open the Command Palette, run **Remote-SSH: Connect to Host…**, and choose `wsl`. Then use **File → Open Folder** to open `/home/{{USERNAME}}/git/{{REPO}}`.
 
 ---
-id: step10
-nav: 10. Day-to-day use
-step: 10
-title: Day-to-day use
----
-
-- [x] Edit files in VS Code or another editor as your normal user.
-- [x] Run Claude Code as the `claude` user, confined to the repository.
-- [x] Shared group ownership, setgid directories, and `umask 002` keep files writable by both accounts.
-
-Add this shortcut to your normal account's `~/.bashrc`:
-
-```bash title="WSL — your normal user"
-alias cc='sudo -iu claude bash -c "cd /home/{{USERNAME}}/git/{{REPO}} && claude"'
-```
-
-Reload your shell, then launch with `cc`:
-
-```bash title="WSL"
-source ~/.bashrc
-cc
-```
-
----
 id: new-forge
-nav: New-Forge setup
+nav: 10. New-Forge setup
+step: 10
 title: New-Forge setup
-lead: Run these in WSL as your normal user, from the VS Code Remote-SSH terminal or `wsl -u {{USERNAME}}`. The GitHub key stays in your home directory, which the `claude` user can't read.
+lead: Run these in WSL as your normal user, from the VS Code Remote-SSH terminal or `wsl -u {{USERNAME}}`.
 ---
 
-### Create a GitHub SSH key
-
-A passphrase is recommended.
-
-```bash title="WSL — your normal user"
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "{{GITHUB_USER}}@wsl" -f ~/.ssh/ursa-github
-```
-
-### Use the key for GitHub
-
-SSH only tries keys with default names on its own, so point GitHub connections at `ursa-github` explicitly:
-
-```bash title="WSL — your normal user"
-cat >> ~/.ssh/config <<'EOF'
-
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/ursa-github
-  IdentitiesOnly yes
-EOF
-chmod 600 ~/.ssh/config
-```
-
-### Add the public key to GitHub
-
-Print the public key and copy the whole line:
-
-```bash title="WSL — your normal user"
-cat ~/.ssh/ursa-github.pub
-```
-
-In GitHub, signed in as `{{GITHUB_USER}}`, go to [Settings → SSH and GPG keys](https://github.com/settings/keys), choose **New SSH key**, and paste it.
-
-> [!NOTE]
-> If the Ursa GitHub organization uses single sign-on, choose **Configure SSO** next to the new key and authorize it for the organization.
-
-Test the connection. Accept the host fingerprint on first connect; GitHub should greet you as `{{GITHUB_USER}}`:
-
-```bash title="WSL — your normal user"
-ssh -T git@github.com
-```
-
-### Fork New-Forge
-
-On GitHub, fork the New-Forge repository into your personal Ursa account, `{{GITHUB_USER}}`.
-
-### Clone your fork
-
-```bash title="WSL — your normal user"
-cd ~/git
-git clone git@github.com:{{GITHUB_USER}}/new-forge.git
-```
+> [!WARNING]
+> **Prerequisite:** ask IT to create a new AWS IAM user specifically for New-Forge work involving the Claude Code agent, with access restricted to what that work needs. Don't use your personal or any existing AWS credentials. IT provides the access key ID and secret access key used in **Add AWS credentials** below.
+>
+> **For IT:** add the new user to the current New-Forge IAM group, [`ursa-forge-group`](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/groups/details/ursa-forge-group).
 
 ### Install Node.js with nvm
 
@@ -901,14 +873,14 @@ npm -v
 ```
 
 > [!TIP]
-> If New-Forge has an `.nvmrc` file, run `nvm install` inside `~/git/new-forge` instead to get the exact version the project expects.
+> If New-Forge has an `.nvmrc` file, run `nvm install` inside `~/git/{{REPO}}` instead to get the exact version the project expects.
 
 ### Install the project dependencies
 
 Run `npm install` so the project and its scripts are usable:
 
 ```bash title="WSL — your normal user"
-cd ~/git/new-forge
+cd ~/git/{{REPO}}
 npm install
 ```
 
@@ -927,7 +899,7 @@ Open the credentials file:
 nano ~/.aws/credentials
 ```
 
-Paste this profile, replacing the placeholder values with the access key ID and secret access key you were given:
+Paste this profile, replacing the placeholder values with the access key ID and secret access key IT provided for the New-Forge IAM user:
 
 ```ini title="~/.aws/credentials"
 [stock-data]
@@ -951,6 +923,29 @@ The project doesn't use the `stock-data` profile automatically yet. In VS Code, 
     "AWS_PROFILE": "stock-data"
   }
 }
+```
+
+---
+id: day-to-day
+nav: Day-to-day use
+title: Day-to-day terminal use
+---
+
+- [x] Edit files in VS Code or another editor as your normal user.
+- [x] Run Claude Code as the `claude` user, confined to the repository.
+- [x] Shared group ownership, setgid directories, and `umask 002` keep files writable by both accounts.
+
+Add this shortcut to your normal account's `~/.bashrc`:
+
+```bash title="WSL — your normal user"
+alias cc='sudo -iu claude bash -c "cd /home/{{USERNAME}}/git/{{REPO}} && claude"'
+```
+
+Reload your shell, then launch with `cc`:
+
+```bash title="WSL"
+source ~/.bashrc
+cc
 ```
 
 ---
