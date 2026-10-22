@@ -807,7 +807,12 @@ ssh-keygen -t ed25519 -C "$env:USERNAME-vscode" -f "$env:USERPROFILE\.ssh\wsl-vs
 Step 8 removed `/mnt/c`, so WSL can no longer read the key from your Windows profile. Pipe it in from PowerShell instead:
 
 ```powershell title="PowerShell"
-Get-Content "$env:USERPROFILE\.ssh\wsl-vscode.pub" | wsl -u {{USERNAME}} --exec sh -c 'mkdir -p /home/{{USERNAME}}/.ssh && chmod 700 /home/{{USERNAME}}/.ssh && tr -d \\r >> /home/{{USERNAME}}/.ssh/authorized_keys && chmod 600 /home/{{USERNAME}}/.ssh/authorized_keys'
+$sh = 'd=/home/{{USERNAME}}/.ssh; ' +
+      'mkdir -p $d && chmod 700 $d && ' +
+      'tr -d \\r >> $d/authorized_keys && ' +
+      'chmod 600 $d/authorized_keys'
+Get-Content "$env:USERPROFILE\.ssh\wsl-vscode.pub" |
+  wsl -u {{USERNAME}} --exec sh -c $sh
 ```
 
 ### Add an SSH host entry on Windows
