@@ -140,6 +140,10 @@ body { margin: 0; background: #f5f7fb; }
 .wsl-guide li + li { margin-top: 7px; }
 .wsl-guide .checklist { list-style: none; padding-left: 0; }
 .wsl-guide .checklist li::before { content: '\2713'; color: var(--success); font-weight: 900; margin-right: 9px; }
+.wsl-guide .table-wrap { overflow-x: auto; margin: 14px 0 18px; }
+.wsl-guide table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.wsl-guide th, .wsl-guide td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.wsl-guide th { background: var(--panel-2); font-weight: 700; }
 .wsl-guide blockquote { margin: 16px 0; padding-left: 14px; border-left: 4px solid var(--line); color: var(--muted); }
 
 .wsl-guide footer { color: var(--muted); text-align: center; padding-top: 18px; font-size: 0.9rem; }
@@ -223,7 +227,12 @@ For an interactive local workflow on Windows with both a dedicated low-privilege
 > **Approval first:** before proceeding to Step 1, get the appropriate approvals from IT; otherwise ThreatLocker will block the setup.
 
 > [!NOTE]
-> **Prerequisite:** install [Claude Desktop](https://claude.ai/download) on Windows before starting Step 1. It launches Claude Code sessions inside WSL, where they run as the sandboxed `claude` user.
+> **Prerequisites:** before starting Step 1:
+>
+> - Install [Claude Desktop](https://claude.ai/download) on Windows. This guide doesn't cover installing it.
+> - **IT:** confirm your Claude seat includes Claude Code, and enable WSL sessions in Claude Desktop. Desktop turns WSL sessions off by default on organization-managed devices; IT turns them on by setting the `disableWslSessions` value under `HKLM\SOFTWARE\Policies\Claude` to `false` (Claude Desktop v1.19367.0 or later).
+>
+> Claude Desktop runs its Claude Code sessions inside WSL as WSL's default user. Step 8 makes that the restricted `claude` user, and Step 11 confirms it.
 
 ---
 id: step1
@@ -795,6 +804,12 @@ ss -tlnp | grep 2222
 
 ### Create an SSH key on Windows
 
+The next commands run in PowerShell on Windows, not in WSL. Exit WSL to return to the PowerShell prompt:
+
+```bash title="WSL — your normal user"
+exit
+```
+
 When asked for a passphrase, press **Enter** twice to leave it empty. The key only opens connections to WSL on this computer (`127.0.0.1:2222`), so a passphrase adds little protection, and without one VS Code connects without prompting.
 
 ```powershell title="PowerShell"
@@ -841,6 +856,9 @@ code --install-extension ms-vscode-remote.remote-ssh
 ```
 
 In VS Code, open the Command Palette, run **Remote-SSH: Connect to Host…**, and choose `wsl`. Then use **File → Open Folder** to open `/home/{{USERNAME}}/git/{{REPO}}`.
+
+> [!TIP]
+> In later VS Code sessions, start WSL before you connect: type `wsl` in PowerShell and leave that window open. WSL shuts down shortly after its last terminal closes, and that also stops the SSH server, so Remote - SSH can't connect until WSL is running again.
 
 ---
 id: new-forge
@@ -929,6 +947,48 @@ The project doesn't use the `stock-data` profile automatically yet. In VS Code, 
   }
 }
 ```
+
+---
+id: step11
+nav: 11. Verify Claude Desktop
+step: 11
+title: Verify Claude Desktop runs as claude
+lead: Confirm that Claude Desktop's Claude Code sessions run inside WSL as the restricted `claude` user, with the managed settings applied.
+---
+
+### Start a WSL session
+
+In Claude Desktop, open the **Code** tab and start a new session. In the environment selector under the prompt box, choose your Ubuntu distribution under **WSL**. Use the folder picker to open `/home/{{USERNAME}}/git/{{REPO}}`, and trust the folder when asked. The first session in a distribution takes a little longer while Claude sets up inside it.
+
+> [!NOTE]
+> If **WSL** is grayed out with **Disabled by your organization**, IT hasn't enabled WSL sessions yet; see the prerequisites in the Overview.
+
+### Check the user
+
+Send this prompt. The answer should be `claude`:
+
+```text title="Claude Desktop — Code tab"
+Run whoami and show me the output.
+```
+
+### Check the managed settings
+
+Run this in the session. The `Setting sources` line should list `Enterprise managed settings (file)`:
+
+```text title="Claude Desktop — Code tab"
+/status
+```
+
+### Check the isolation
+
+Send this prompt. The command should fail with `Permission denied`, because `claude` can't read your AWS credentials:
+
+```text title="Claude Desktop — Code tab"
+Run ls /home/{{USERNAME}}/.aws and show me the output.
+```
+
+> [!WARNING]
+> Don't use the session's **Open in editor** button. It opens VS Code through the WSL extension, which connects as `claude`. Edit in VS Code through Remote - SSH instead (Step 9).
 
 ---
 id: day-to-day
@@ -1022,6 +1082,22 @@ Current Auth: PAT
 ### 4. Threat-model conclusion
 
 Determine resignedly that CoCo does not solve the threat model problem of running Claude Code with a PAT into Snowflake. Indeed, CoCo CLI is basically just Claude Code with a PAT into Snowflake and a bunch of Snowflake-specific skills.
+
+---
+id: appendix-names
+nav: "Appendix B: Claude product names"
+title: Claude product names
+eyebrow: Appendix B
+---
+
+Anthropic ships Claude Code as one product on several surfaces (terminal, IDE, desktop, web and mobile), so similar names refer to different apps. This guide uses the names below.
+
+| What it is | Name to use | Anthropic's name |
+|---|---|---|
+| Claude Code run from a Linux, macOS or Windows terminal | Claude Code CLI, or Claude Code in the terminal | Claude Code |
+| The Windows app installed from claude.ai/download | Claude Desktop | the Claude Desktop app |
+| The coding part of Claude Desktop | the Code tab in Claude Desktop | Claude Code Desktop, or Claude Code on desktop |
+| The chat part of Claude Desktop | Claude chat | Claude |
 </script>
 
 <!-- =====================================================================
@@ -1103,9 +1179,24 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
   var HR_RE = /^ {0,3}([-*_])(\s*\1){2,}\s*$/;
   var QUOTE_RE = /^ {0,3}>/;
   var LIST_RE = /^( {0,3})([-*+]|\d{1,9}[.)])( +|$)/;
+  var TABLE_RE = /^ {0,3}\|/;
+  var TABLE_SEP_RE = /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
   function startsBlock(line) {
-    return FENCE_RE.test(line) || HEADING_RE.test(line) || HR_RE.test(line) || QUOTE_RE.test(line) || LIST_RE.test(line);
+    return FENCE_RE.test(line) || HEADING_RE.test(line) || HR_RE.test(line) || QUOTE_RE.test(line) || LIST_RE.test(line) || TABLE_RE.test(line);
+  }
+
+  /** GitHub-style pipe table: header row, separator row, body rows. */
+  function renderTable(lines) {
+    function cells(row) {
+      return row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) { return renderInline(c.trim()); });
+    }
+    var head = cells(lines[0]);
+    var body = lines.slice(2).map(cells);
+    return '<div class="table-wrap"><table><thead><tr>' +
+      head.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      body.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+      '</tbody></table></div>';
   }
 
   function leadingSpaces(line) {
@@ -1221,6 +1312,13 @@ Determine resignedly that CoCo does not solve the threat model problem of runnin
         var quote = [];
         while (i < lines.length && QUOTE_RE.test(lines[i])) quote.push(lines[i++].replace(/^ {0,3}> ?/, ''));
         out.push(renderQuote(quote));
+        continue;
+      }
+
+      if (TABLE_RE.test(line) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
+        var rows = [];
+        while (i < lines.length && TABLE_RE.test(lines[i])) rows.push(lines[i++]);
+        out.push(renderTable(rows));
         continue;
       }
 
