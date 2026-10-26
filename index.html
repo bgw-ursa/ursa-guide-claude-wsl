@@ -368,7 +368,7 @@ Restart WSL so the new group membership takes effect. Close all Ubuntu terminals
 wsl --shutdown
 ```
 
-Reopen Ubuntu and confirm `agentic` appears in your groups:
+Start WSL again by typing `wsl` in PowerShell. You're signed in as your normal user. Confirm `agentic` appears in your groups:
 
 ```bash title="WSL — your normal user"
 id -nG | grep -w agentic
@@ -906,6 +906,59 @@ Run `npm install` so the project and its scripts are usable:
 cd ~/git/{{REPO}}
 npm install
 ```
+
+### Install Python, pip and venv
+
+Ubuntu includes Python 3, but not pip or the `venv` module. Install both:
+
+```bash title="WSL — your normal user"
+sudo apt update && sudo apt install -y python3-pip python3-venv
+```
+
+Ubuntu blocks `pip install` into the system Python, so install Python packages into a virtual environment instead. Create one in the repository and activate it:
+
+```bash title="WSL — your normal user"
+cd ~/git/{{REPO}}
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt now starts with `(.venv)`. Upgrade pip inside the environment and confirm the versions:
+
+```bash title="WSL — your normal user"
+python -m pip install --upgrade pip
+python --version
+pip --version
+```
+
+Install SQLMesh into the environment. The version is pinned because New-Forge's `config.py` patches a SQLMesh internal:
+
+```bash title="WSL — your normal user"
+pip install sqlmesh==0.235.4
+```
+
+> [!TIP]
+> Keep `.venv` out of Git by listing it in `.gitignore` if it isn't already.
+
+### Use the environment in VS Code
+
+New-Forge's npm scripts run `sqlmesh` and `python3` from `PATH`, so they only work while the environment is active. Let VS Code activate it for you:
+
+1. In the VS Code window connected to `wsl` through Remote - SSH, open the Extensions view, search for **Python** (by Microsoft), and select **Install in SSH: wsl**.
+2. Open the Command Palette, run **Python: Select Interpreter**, and choose `./.venv/bin/python`.
+3. Open a new terminal (**Terminal → New Terminal**) and confirm that `sqlmesh` comes from the environment:
+
+```bash title="WSL — VS Code terminal"
+which sqlmesh
+```
+
+It should print `/home/{{USERNAME}}/git/{{REPO}}/.venv/bin/sqlmesh`.
+
+> [!NOTE]
+> This relies on VS Code activating the environment in its terminals. In a terminal outside VS Code, such as `wsl -u {{USERNAME}}` from PowerShell, activate it yourself before running New-Forge scripts: run `source .venv/bin/activate` from `~/git/{{REPO}}`. Run `deactivate` to leave it.
+
+> [!WARNING]
+> **Temporary test note (remove before publishing):** it's unverified whether VS Code also activates the environment for tasks run from **Terminal → Run Task…**, such as **Open DuckDB UI**. Tasks run in a separate non-interactive shell. If a task fails with `sqlmesh: command not found` or `No module named 'duckdb'`, the environment wasn't active there; the fallback is to activate it from the top of `~/.bashrc`, before the line that stops non-interactive shells. Also unverified: whether SQLMesh 0.235.4 installs and runs on Ubuntu 26.04's Python (CI uses 3.12), and whether SQLMesh brings in `duckdb` on its own.
 
 ### Add AWS credentials
 
