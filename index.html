@@ -687,23 +687,6 @@ sudo tee /etc/claude-code/managed-settings.json >/dev/null <<'EOF'
 EOF
 ```
 
-### Let Claude Desktop sessions write to the repository
-
-Inside the sandbox, Claude Desktop sessions can't write to the repository until it is listed in `sandbox.filesystem.allowWrite`. Claude Code CLI sessions can write without it. Write `claude`'s user settings file before Claude Code first starts below. The command overwrites `/home/claude/.claude/settings.json`, so it also removes anything already saved there:
-
-```bash title="WSL — your normal user"
-sudo -u claude mkdir -p /home/claude/.claude
-sudo -u claude tee /home/claude/.claude/settings.json >/dev/null <<'EOF'
-{
-  "sandbox": {
-    "filesystem": {
-      "allowWrite": ["/home/{{USERNAME}}/git/{{REPO}}"]
-    }
-  }
-}
-EOF
-```
-
 ### Start Claude Code in the repository
 
 ```bash title="WSL — switch to claude"
@@ -1082,6 +1065,22 @@ The first session in a distribution takes a little longer while Claude sets up i
 
 > [!NOTE]
 > If **WSL** is grayed out with **Disabled by your organization**, IT hasn't enabled WSL sessions yet; see the prerequisites in the Overview.
+
+> [!NOTE]
+> **If the session can't write to the repository:** opening the bind-mounted folder from Step 4 should be enough, and in testing Claude Desktop sessions could write without extra settings. If writes are blocked anyway, list the repository in `sandbox.filesystem.allowWrite` in `claude`'s user settings. Run this as your normal user, then start a new session. It overwrites `/home/claude/.claude/settings.json`, including any theme or other settings saved there:
+>
+> ```bash title="WSL — your normal user"
+> sudo -u claude mkdir -p /home/claude/.claude
+> sudo -u claude tee /home/claude/.claude/settings.json >/dev/null <<'EOF'
+> {
+>   "sandbox": {
+>     "filesystem": {
+>       "allowWrite": ["/home/{{USERNAME}}/git/{{REPO}}"]
+>     }
+>   }
+> }
+> EOF
+> ```
 
 ### Check the user
 
