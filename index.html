@@ -390,20 +390,20 @@ source ~/.bashrc
 id: step4
 nav: 4. Share repo access
 step: 4
-title: Grant both accounts access to your repositories
+title: Grant both accounts access to the repository
 ---
 
-These commands share `~/git`, the folder that holds all your repositories, not just `{{REPO}}`. They apply recursively to everything already in it, and any repository you clone into `~/git` later is shared with `claude` automatically. Keep any repository the agent must not touch outside `~/git`.
+These commands share only `~/git/{{REPO}}` with `claude`, not the rest of `~/git`. They apply recursively to everything already in the repository, and files and folders added to it later are shared automatically. Other repositories in `~/git` aren't shared: `claude` can't change them, though with Ubuntu's default permissions it can still read them.
 
 ```bash title="WSL — your normal user"
-# Group-own ~/git and everything in it
-sudo chgrp -R agentic ~/git
+# Group-own the repository and everything in it
+sudo chgrp -R agentic ~/git/{{REPO}}
 
 # Give the group read/write access. Capital X adds execute only where appropriate.
-sudo chmod -R g+rwX ~/git
+sudo chmod -R g+rwX ~/git/{{REPO}}
 
-# New files and directories, including future clones, inherit the agentic group.
-sudo find ~/git -type d -exec chmod g+s {} +
+# New files and directories in the repository inherit the agentic group.
+sudo find ~/git/{{REPO}} -type d -exec chmod g+s {} +
 ```
 
 ### Make new files group-writable by default
@@ -424,13 +424,33 @@ chmod o+x /home/{{USERNAME}}
 
 This grants traverse permission only; it does not let the `claude` user list your home directory contents.
 
-### Mark the repositories as safe for Git
+### Show the repository in `claude`'s home
 
-The trailing `/*` covers every repository in `~/git`, including future ones:
+Claude Desktop's WSL folder picker browses as `claude` and starts in `claude`'s home. Because `claude` can't list your home directory, it can't click through to the repository from there. A symlink in `claude`'s home doesn't solve this: the picker doesn't show symlinks as folders it can open. Instead, bind-mount the repository into `claude`'s home, so it appears there as a normal folder. Both paths show the same files.
+
+Create an empty folder and mount the repository onto it:
 
 ```bash title="WSL — your normal user"
-sudo -u claude git config --global --add safe.directory '/home/{{USERNAME}}/git/*'
+sudo mkdir /home/claude/{{REPO}}
+sudo mount --bind /home/{{USERNAME}}/git/{{REPO}} /home/claude/{{REPO}}
 ```
+
+Make the mount come back after WSL restarts by adding it to `/etc/fstab`:
+
+```bash title="WSL — your normal user"
+echo '/home/{{USERNAME}}/git/{{REPO}} /home/claude/{{REPO}} none bind 0 0' | sudo tee -a /etc/fstab
+```
+
+WSL applies `/etc/fstab` at startup. That stays on in Step 8: turning off `[automount]` stops only the Windows drive mounts, not `/etc/fstab`.
+
+### Mark the repository as safe for Git
+
+```bash title="WSL — your normal user"
+sudo -u claude git config --global --add safe.directory '/home/{{USERNAME}}/git/{{REPO}}'
+sudo -u claude git config --global --add safe.directory '/home/claude/{{REPO}}'
+```
+
+The second entry covers the bind-mounted path, which Claude Desktop sessions use.
 
 ---
 id: step5
@@ -451,6 +471,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 claude --version
 ```
+
+### Start in the repository
+
+The repository lives in your normal user's home, at `/home/{{USERNAME}}/git/{{REPO}}`, not in `claude`'s home. Make every new `claude` shell start there:
+
+```bash title="WSL — as claude"
+echo 'cd /home/{{USERNAME}}/git/{{REPO}} 2>/dev/null' >> ~/.bashrc
+source ~/.bashrc
+pwd
+```
+
+`pwd` should print `/home/{{USERNAME}}/git/{{REPO}}`. If the folder is missing, the shell stays in `claude`'s home instead of failing.
 
 > [!WARNING]
 > **Do not** run the installer or the `claude` command with `sudo`. The agent should run as the non-root `claude` user. Claude Code's bypass-permissions mode is also blocked for root.
@@ -649,6 +681,23 @@ sudo tee /etc/claude-code/managed-settings.json >/dev/null <<'EOF'
     "allowUnsandboxedCommands": false,
     "network": {
       "httpProxyPort": 3128
+    }
+  }
+}
+EOF
+```
+
+### Let Claude Desktop sessions write to the repository
+
+Inside the sandbox, Claude Desktop sessions can't write to the repository until it is listed in `sandbox.filesystem.allowWrite`. Claude Code CLI sessions can write without it. Write `claude`'s user settings file before Claude Code first starts below. The command overwrites `/home/claude/.claude/settings.json`, so it also removes anything already saved there:
+
+```bash title="WSL — your normal user"
+sudo -u claude mkdir -p /home/claude/.claude
+sudo -u claude tee /home/claude/.claude/settings.json >/dev/null <<'EOF'
+{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["/home/{{USERNAME}}/git/{{REPO}}"]
     }
   }
 }
@@ -937,28 +986,41 @@ Install SQLMesh into the environment. The version is pinned because New-Forge's 
 pip install sqlmesh==0.235.4
 ```
 
+Put the environment's `bin` folder at the front of both accounts' `PATH`, so `sqlmesh` and `python3` resolve to the environment without activating it. This matters most for the Claude Code agent, whose shell starts from `claude`'s `~/.bashrc`:
+
+```bash title="WSL — your normal user"
+# Your account
+echo 'export PATH="/home/{{USERNAME}}/git/{{REPO}}/.venv/bin:$PATH"' >> ~/.bashrc
+
+# The claude account
+echo 'export PATH="/home/{{USERNAME}}/git/{{REPO}}/.venv/bin:$PATH"' | sudo tee -a /home/claude/.bashrc
+```
+
+Confirm that both accounts find SQLMesh in the environment. Both commands should print `/home/{{USERNAME}}/git/{{REPO}}/.venv/bin/sqlmesh`:
+
+```bash title="WSL — your normal user"
+bash -ic 'which sqlmesh'
+sudo -iu claude bash -ic 'which sqlmesh'
+```
+
 > [!TIP]
 > Keep `.venv` out of Git by listing it in `.gitignore` if it isn't already.
 
-### Use the environment in VS Code
-
-New-Forge's npm scripts run `sqlmesh` and `python3` from `PATH`, so they only work while the environment is active. Let VS Code activate it for you:
-
-1. In the VS Code window connected to `wsl` through Remote - SSH, open the Extensions view, search for **Python** (by Microsoft), and select **Install in SSH: wsl**.
-2. Open the Command Palette, run **Python: Select Interpreter**, and choose `./.venv/bin/python`.
-3. Open a new terminal (**Terminal → New Terminal**) and confirm that `sqlmesh` comes from the environment:
-
-```bash title="WSL — VS Code terminal"
-which sqlmesh
-```
-
-It should print `/home/{{USERNAME}}/git/{{REPO}}/.venv/bin/sqlmesh`.
+> [!TIP]
+> **Optional, for editing Python in VS Code:** in the VS Code window connected to `wsl` through Remote - SSH, install the **Python** extension (by Microsoft) with **Install in SSH: wsl**. Then run **Python: Select Interpreter** from the Command Palette and choose `./.venv/bin/python`, so the editor resolves imports from the environment. Running New-Forge scripts doesn't need this.
 
 > [!NOTE]
-> This relies on VS Code activating the environment in its terminals. In a terminal outside VS Code, such as `wsl -u {{USERNAME}}` from PowerShell, activate it yourself before running New-Forge scripts: run `source .venv/bin/activate` from `~/git/{{REPO}}`. Run `deactivate` to leave it.
+> **Where the environment is active:**
+>
+> - **VS Code terminals:** with the Python extension installed, VS Code finds `.venv` when you open the folder and runs `source .venv/bin/activate` in each new integrated terminal for you. The `python.terminal.activateEnvironment` setting controls this and is on by default. To use a different environment, run **Python: Select Interpreter**.
+> - **The Claude Code agent:** the `PATH` entry in `claude`'s `~/.bashrc`.
+> - **Your own WSL or SSH terminals outside VS Code:** VS Code's activation doesn't reach them. If New-Forge commands don't find the environment there, run `source .venv/bin/activate` from `~/git/{{REPO}}` first.
 
 > [!WARNING]
-> **Temporary test note (remove before publishing):** it's unverified whether VS Code also activates the environment for tasks run from **Terminal → Run Task…**, such as **Open DuckDB UI**. Tasks run in a separate non-interactive shell. If a task fails with `sqlmesh: command not found` or `No module named 'duckdb'`, the environment wasn't active there; the fallback is to activate it from the top of `~/.bashrc`, before the line that stops non-interactive shells. Also unverified: whether SQLMesh 0.235.4 installs and runs on Ubuntu 26.04's Python (CI uses 3.12), and whether SQLMesh brings in `duckdb` on its own.
+> **removeMe TODO:** confirm the venv works in a plain WSL terminal as your normal user, outside VS Code, for example `wsl -u {{USERNAME}}` or `ssh wsl`. Run `which python3 sqlmesh`; both should print paths in `~/git/{{REPO}}/.venv/bin` through the `PATH` entry in your `~/.bashrc`. VS Code terminals are confirmed working. If the plain terminal fails, decide whether to fix the `PATH` entry or drop it and document `source .venv/bin/activate` instead.
+
+> [!WARNING]
+> **Temporary test note (remove before publishing):** the `PATH` entry is appended to `~/.bashrc`, and Ubuntu's `~/.bashrc` stops early in non-interactive shells. It's unverified whether VS Code tasks run from **Terminal → Run Task…**, such as **Open DuckDB UI**, and the Claude Code agent's shell get past that early stop. If a task or the agent fails with `sqlmesh: command not found` or `No module named 'duckdb'`, the entry didn't apply there; the fallback is to put the `export PATH` line at the top of `~/.bashrc`, before the line that stops non-interactive shells. Also unverified: whether SQLMesh 0.235.4 installs and runs on Ubuntu 26.04's Python (CI uses 3.12), and whether SQLMesh brings in `duckdb` on its own.
 
 ### Add AWS credentials
 
@@ -1011,7 +1073,12 @@ lead: Confirm that Claude Desktop's Claude Code sessions run inside WSL as the r
 
 ### Start a WSL session
 
-In Claude Desktop, open the **Code** tab and start a new session. In the environment selector under the prompt box, choose your Ubuntu distribution under **WSL**. Use the folder picker to open `/home/{{USERNAME}}/git/{{REPO}}`, and trust the folder when asked. The first session in a distribution takes a little longer while Claude sets up inside it.
+1. In Claude Desktop, open the **Code** tab and start a new session.
+2. In the environment selector under the prompt box, choose your Ubuntu distribution under **WSL**.
+3. Choose the session's folder. Claude Desktop opens a Windows folder dialog that browses inside WSL as `claude`, starting in `claude`'s home, `/home/claude`. Open the `{{REPO}}` folder there, which is the bind mount from Step 4, and select it. Don't browse to `/home/{{USERNAME}}`; `claude` can't list your home, so the repository can't be reached that way.
+4. Trust the folder when asked.
+
+The first session in a distribution takes a little longer while Claude sets up inside it.
 
 > [!NOTE]
 > If **WSL** is grayed out with **Disabled by your organization**, IT hasn't enabled WSL sessions yet; see the prerequisites in the Overview.
