@@ -2,7 +2,7 @@
 # setup-wsl.sh: automates the Linux side of the WSL guide (Steps 2-10).
 #
 # Run inside WSL as your normal user, not as root and not as claude:
-#   REPO=new-forge GITHUB_USER=yourname-ursa bash setup-wsl.sh
+#   GITHUB_USER=yourname-ursa bash setup-wsl.sh
 #
 # Options:
 #   --from STEP   start at STEP and run every step after it (e.g. --from 10)
@@ -17,24 +17,43 @@
 # failure or a WSL restart you can run it again and it picks up where it left off.
 #
 # Not covered (manual): Step 1 (install WSL and Ubuntu), adding the key to
-# GitHub and forking (the script pauses for this), the Windows side of Step 9
+# GitHub and forking (the script pauses for both), the Windows side of Step 9
 # (create the VS Code key, add the host entry, install Remote - SSH; the script
 # asks you to paste the public key), the first `claude` sign-in and /sandbox
 # check, and the Claude Desktop checks in Step 11.
 
 set -euo pipefail
 
-# ---------- settings (same values as the guide's "Customize this guide" form) ----------
-REPO="${REPO:-new-forge}"
+# ---------- settings ----------
 GITHUB_USER="${GITHUB_USER:-}"
 SQUID_MODE="${SQUID_MODE:-open}"   # open (evaluation period: allow all domains) | allowlist (production)
-NVM_VERSION="v0.40.8"
+NODE_MAJOR="26"         # Node.js major version (current LTS), installed system-wide from NodeSource
 SQLMESH_VERSION="0.235.4"
 DUCKDB_VERSION="1.5.6"
 
+# ---------- repositories ----------
+# Every repository this WSL instance gets, one per line: "name|source|claude access".
+# All are cloned into ~/git/<name>. To add, rename or change one, edit this list
+# and re-run the script (--only 2 clones new ones, --only 4 applies access).
+#   source  fork = clone your fork, github.com/<GITHUB_USER>/<name>, forked from UPSTREAM_ORG
+#           org  = clone github.com/<UPSTREAM_ORG>/<name> directly, no fork
+#   access  rw   = claude can read and write (shared through the agentic group)
+#           ro   = claude can read, not write
+#           none = claude can't open it at all; it doesn't even show it exists
+# Any other folder that appears in ~/git later is closed to claude too (see Step 4).
+UPSTREAM_ORG="ursahealth"
+REPOS=(
+  "new-forge|fork|rw"
+  "ursa-studio|fork|ro"
+  "new-forge-helpers|org|none"
+)
+# The repository shells start in, and the one Step 10 runs npm install and creates the Python environment in.
+PRIMARY_REPO="new-forge"
+
 U="$USER"
 H="$HOME"
-REPO_DIR="$H/git/$REPO"
+GIT_DIR="$H/git"
+PRIMARY_DIR="$GIT_DIR/$PRIMARY_REPO"
 CLAUDE_HOME="/home/claude"
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -79,8 +98,17 @@ if [ -z "$GITHUB_USER" ]; then
 fi
 [ -n "$GITHUB_USER" ] || { echo "GitHub username is required." >&2; exit 1; }
 case "$SQUID_MODE" in allowlist|open) ;; *) echo "SQUID_MODE must be allowlist or open." >&2; exit 1 ;; esac
+PRIMARY_OK=false
+for entry in "${REPOS[@]}"; do
+  IFS='|' read -r name source access <<<"$entry"
+  [[ "$source" =~ ^(fork|org)$ && "$access" =~ ^(rw|ro|none)$ && -n "$name" ]] ||
+    { echo "Bad entry in REPOS: '$entry' (expected name|fork-or-org|rw-ro-or-none)." >&2; exit 1; }
+  [ "$name" = "$PRIMARY_REPO" ] && [ "$access" = rw ] && PRIMARY_OK=true
+done
+$PRIMARY_OK || { echo "PRIMARY_REPO ($PRIMARY_REPO) must be in REPOS with access rw." >&2; exit 1; }
+[ -n "${REPO:-}" ] && note "Ignoring REPO=$REPO: the repositories are now listed in REPOS at the top of the script."
 
-say "Settings: user=$U repo=$REPO github=$GITHUB_USER squid=$SQUID_MODE"
+say "Settings: user=$U github=$GITHUB_USER squid=$SQUID_MODE repos: ${REPOS[*]}"
 sudo -v
 # Keep sudo's credential cache warm until the script exits.
 while true; do sudo -n true; sleep 50; kill -0 "$$" 2>/dev/null || exit; done 2>/dev/null &
@@ -95,13 +123,13 @@ say "Installing packages"
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git curl iptables squid iptables-persistent bubblewrap socat \
-  openssh-server python3-pip python3-venv
+  openssh-server python3-pip python3-venv acl
 
 }
 
-# ---------- Step 2: GitHub key and clone ----------
+# ---------- Step 2: GitHub key and clones ----------
 step_2() {
-say "Step 2: GitHub SSH key"
+say "Step 2: GitHub SSH key and repositories"
 mkdir -p "$H/.ssh" && chmod 700 "$H/.ssh"
 if [ ! -f "$H/.ssh/ursa-github" ]; then
   ssh-keygen -q -t ed25519 -N "" -C "$GITHUB_USER@wsl" -f "$H/.ssh/ursa-github"
@@ -118,7 +146,15 @@ EOF
 fi
 chmod 600 "$H/.ssh/config"
 
-if [ ! -d "$REPO_DIR/.git" ]; then
+MISSING=()
+FORKS=()
+for entry in "${REPOS[@]}"; do
+  IFS='|' read -r name source access <<<"$entry"
+  [ -d "$GIT_DIR/$name/.git" ] || MISSING+=("$entry")
+  [ "$source" = fork ] && FORKS+=("$name")
+done
+
+if [ ${#MISSING[@]} -gt 0 ]; then
   # `ssh -T` exits 1 even when authentication succeeds, so test its output, not its status.
   github_ok() {
     local out
@@ -141,7 +177,8 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     if copy_key; then
       note "     It's already on your Windows clipboard: paste it in GitHub with Ctrl+V."
     fi
-    note "  2. Fork https://github.com/ursahealth/$REPO into $GITHUB_USER if you haven't already."
+    note "  2. If you haven't already, fork these into $GITHUB_USER:"
+    for name in "${FORKS[@]}"; do note "       https://github.com/$UPSTREAM_ORG/$name"; done
     while true; do
       read -erp "    Press Enter to test again, or type c and Enter to copy the key again: " ans
       case "$ans" in
@@ -150,9 +187,58 @@ if [ ! -d "$REPO_DIR/.git" ]; then
       esac
     done
   done
-  mkdir -p "$H/git"
-  git clone "git@github.com:$GITHUB_USER/$REPO.git" "$REPO_DIR"
+  mkdir -p "$GIT_DIR"
+  for entry in "${MISSING[@]}"; do
+    IFS='|' read -r name source access <<<"$entry"
+    if [ "$source" = fork ]; then url="git@github.com:$GITHUB_USER/$name.git"
+    else url="git@github.com:$UPSTREAM_ORG/$name.git"; fi
+    # The key works by now, so a failure here means the fork or the access is missing.
+    until git ls-remote "$url" >/dev/null 2>&1; do
+      if [ "$source" = fork ]; then
+        note "Can't find your fork $url."
+        note "Fork https://github.com/$UPSTREAM_ORG/$name into $GITHUB_USER."
+      else
+        note "Can't read $url. Ask for access to https://github.com/$UPSTREAM_ORG/$name."
+      fi
+      read -erp "    Press Enter to try again..." _
+    done
+    git clone "$url" "$GIT_DIR/$name"
+  done
 fi
+
+# Git identity for the read-and-write repositories, written to each one's own
+# .git/config. It applies to everyone who commits in that checkout, so claude's
+# commits carry your name and email too, and Claude Code adds its
+# "Co-Authored-By: Claude" trailer to mark them. That keeps each person's Claude
+# commits distinguishable once merged. Your global git config isn't changed.
+# The values are asked for, never guessed (for example a name from an email
+# address). A repository that already has both keeps them, so re-runs don't ask.
+GIT_NAME=""; GIT_EMAIL=""
+for entry in "${REPOS[@]}"; do
+  IFS='|' read -r name source access <<<"$entry"
+  repo_dir="$GIT_DIR/$name"
+  [ "$access" = rw ] && [ -d "$repo_dir/.git" ] || continue
+  cur_name=$(git -C "$repo_dir" config --local user.name 2>/dev/null || true)
+  cur_email=$(git -C "$repo_dir" config --local user.email 2>/dev/null || true)
+  if [ -n "$cur_name" ] && [ -n "$cur_email" ]; then
+    note "$name: commits are already authored as $cur_name <$cur_email>"
+    continue
+  fi
+  if [ -z "$GIT_NAME" ]; then
+    note "Your git name and email, for commits in the read-and-write repositories."
+    until [ -n "${GIT_NAME// /}" ]; do
+      read -erp "    Your name for git commits (for example: Jane Smith): " GIT_NAME
+    done
+    until [[ "$GIT_EMAIL" == ?*@?*.?* ]]; do
+      [ -n "$GIT_EMAIL" ] && note "'$GIT_EMAIL' doesn't look like an email address."
+      read -erp "    Your email for git commits (the one on your GitHub account): " GIT_EMAIL
+      GIT_EMAIL=$(printf '%s' "$GIT_EMAIL" | tr -d '[:space:]')
+    done
+  fi
+  git -C "$repo_dir" config --local user.name "$GIT_NAME"
+  git -C "$repo_dir" config --local user.email "$GIT_EMAIL"
+  note "$name: commits are authored as $GIT_NAME <$GIT_EMAIL>"
+done
 
 }
 
@@ -166,24 +252,99 @@ append_once "$H/.bashrc" "alias claude='echo \"Please run claude as the claude u
 
 }
 
-# ---------- Step 4: share the repository ----------
+# ---------- Step 4: what claude can reach ----------
+# remove_mount TARGET: unmount TARGET and drop its /etc/fstab line, if it has one.
+remove_mount() {
+  local target=$1
+  if mountpoint -q "$target"; then sudo umount "$target"; fi
+  if awk -v t="$target" '$2 == t {f = 1} END {exit !f}' /etc/fstab; then
+    awk -v t="$target" '$2 != t' /etc/fstab | sudo tee /etc/fstab.new >/dev/null
+    sudo mv /etc/fstab.new /etc/fstab
+  fi
+}
+
+# ensure_mount SOURCE TARGET OPTIONS: bind-mount SOURCE at TARGET now and at every
+# WSL start (/etc/fstab), replacing any older line for TARGET.
+ensure_mount() {
+  local src=$1 target=$2 opts=$3
+  local line="$src $target none $opts 0 0"
+  if ! grep -qxF -- "$line" /etc/fstab; then
+    remove_mount "$target"
+    echo "$line" | sudo tee -a /etc/fstab >/dev/null
+  fi
+  sudo -u claude -H mkdir -p "$target"   # as claude, so claude owns ~/git
+  mountpoint -q "$target" || sudo mount "$target"   # mount reads the options from /etc/fstab
+}
+
+# set_access DIR rw|ro|none: give claude that access to DIR and everything in it.
+# claude gets in only through the agentic group, never through "others" (o).
+# The default ACL on every folder makes new files and folders get the same
+# access, however they're created: umask 002 in .bashrc only covers terminals,
+# and Claude Desktop doesn't start one, so without the ACL its files would come
+# out readable but not writable by the group.
+set_access() {
+  local dir=$1 access=$2
+  case "$access" in
+    rw)
+      sudo chgrp -R agentic "$dir"
+      sudo chmod -R g+rwX,o-rwx "$dir"
+      sudo find "$dir" -type d -exec chmod g+s {} +   # new files join agentic
+      sudo find "$dir" -type d -exec setfacl -d -m u::rwX,g::rwX,o::--- {} + ;;
+    ro)
+      sudo chgrp -R agentic "$dir"
+      sudo chmod -R g+rX,g-w,o-rwx "$dir"
+      sudo find "$dir" -type d -exec chmod g+s {} +
+      sudo find "$dir" -type d -exec setfacl -d -m u::rwX,g::rX,o::--- {} + ;;
+    none)
+      sudo chgrp -R "$(id -gn)" "$dir"   # your own group, which claude isn't in
+      sudo chmod -R g-w,o-rwx "$dir"
+      sudo find "$dir" -type d -exec chmod g-s {} +
+      sudo find "$dir" -type d -exec setfacl -d -m u::rwX,g::rX,o::--- {} + ;;
+  esac
+}
+
 step_4() {
-say "Step 4: share $REPO_DIR with claude"
-sudo chgrp -R agentic "$REPO_DIR"
-sudo chmod -R g+rwX "$REPO_DIR"
-sudo find "$REPO_DIR" -type d -exec chmod g+s {} +
+say "Step 4: what claude can reach in $GIT_DIR"
 append_once "$H/.bashrc" 'umask 002'
 append_once "$CLAUDE_HOME/.bashrc" 'umask 002' claude
-chmod o+x "$H"
+chmod o+x "$H"   # claude may pass through your home to ~/git, but not list it
 
-sudo mkdir -p "$CLAUDE_HOME/$REPO"
-mountpoint -q "$CLAUDE_HOME/$REPO" || sudo mount --bind "$REPO_DIR" "$CLAUDE_HOME/$REPO"
-FSTAB_LINE="$REPO_DIR $CLAUDE_HOME/$REPO none bind 0 0"
-sudo grep -qxF -- "$FSTAB_LINE" /etc/fstab || echo "$FSTAB_LINE" | sudo tee -a /etc/fstab >/dev/null
+# ~/git: claude may pass through to the repositories it's allowed, but can't list
+# the folder, so it can't see what else is there. The default ACL closes any
+# folder created here later (a new clone, say) to claude, unless it's added to REPOS.
+mkdir -p "$GIT_DIR"
+chmod 711 "$GIT_DIR"
+setfacl -d -m u::rwx,g::rx,o::--- "$GIT_DIR"
 
-for d in "$REPO_DIR" "$CLAUDE_HOME/$REPO"; do
-  sudo -u claude -H git config --global --get-all safe.directory 2>/dev/null | grep -qxF -- "$d" ||
-    sudo -u claude -H git config --global --add safe.directory "$d"
+# Repositories claude can open also appear in claude's home, at the same relative
+# path as the real one: /home/<you>/git/<repo> shows up as /home/claude/git/<repo>.
+# Why: Claude Desktop's folder picker on Windows browses WSL as claude, starting in
+# /home/claude. To reach the real path it would have to list /home/<you>, and claude
+# can't: your home is only o+x (pass-through, no listing), and we don't loosen that.
+# The picker doesn't follow symlinks, so it's a bind mount; /etc/fstab re-creates
+# it at every WSL start. Read-only repositories are mounted read-only as well.
+for entry in "${REPOS[@]}"; do
+  IFS='|' read -r name source access <<<"$entry"
+  dir="$GIT_DIR/$name"
+  mnt="$CLAUDE_HOME/git/$name"
+  if [ ! -d "$dir" ]; then note "$dir isn't there yet; run step 2 first."; continue; fi
+  note "$name: claude access $access"
+  set_access "$dir" "$access"
+
+  # Earlier versions of this script mounted at /home/claude/<repo>.
+  remove_mount "$CLAUDE_HOME/$name"; sudo rmdir "$CLAUDE_HOME/$name" 2>/dev/null || true
+
+  case "$access" in
+    rw) ensure_mount "$dir" "$mnt" bind ;;
+    ro) ensure_mount "$dir" "$mnt" bind,ro ;;
+    none) remove_mount "$mnt"; sudo rmdir "$mnt" 2>/dev/null || true ;;
+  esac
+  if [ "$access" != none ]; then
+    for d in "$dir" "$mnt"; do
+      sudo -u claude -H git config --global --get-all safe.directory 2>/dev/null | grep -qxF -- "$d" ||
+        sudo -u claude -H git config --global --add safe.directory "$d"
+    done
+  fi
 done
 
 }
@@ -195,7 +356,7 @@ if ! sudo -u claude -H test -x "$CLAUDE_HOME/.local/bin/claude"; then
   sudo -u claude -H bash -c 'cd ~ && curl -fsSL https://claude.ai/install.sh | bash'
 fi
 append_once "$CLAUDE_HOME/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"' claude
-append_once "$CLAUDE_HOME/.bashrc" "cd $REPO_DIR 2>/dev/null" claude
+append_once "$CLAUDE_HOME/.bashrc" "cd $PRIMARY_DIR 2>/dev/null" claude
 
 }
 
@@ -233,6 +394,8 @@ if [ ! -f /etc/squid/allowed-domains.txt ]; then
 .anthropic.com
 .claude.ai
 .claude.com
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
 #.github.com
 #.githubusercontent.com
 #registry.npmjs.org
@@ -310,7 +473,7 @@ if $SYSTEMD; then
 else
   note "systemd isn't running yet, so the SSH service is set up on the next run, after the WSL restart."
 fi
-append_once "$H/.bashrc" "[ \"\$PWD\" = \"\$HOME\" ] && cd ~/git/$REPO 2>/dev/null"
+append_once "$H/.bashrc" "[ \"\$PWD\" = \"\$HOME\" ] && cd ~/git/$PRIMARY_REPO 2>/dev/null"
 
 # Authorize the VS Code key created on Windows (pasted, like the AWS keys).
 AUTH="$H/.ssh/authorized_keys"
@@ -338,32 +501,63 @@ fi
 
 # ---------- Step 10: New-Forge tooling ----------
 step_10() {
-say "Step 10: Node.js, npm packages, Python environment"
-export NVM_DIR="$H/.nvm"
-# The download can fail on a flaky connection, so try it up to 3 times.
-for attempt in 1 2 3; do
-  [ -s "$NVM_DIR/nvm.sh" ] && break
-  rm -rf "$NVM_DIR"   # clear a half-finished download (no nvm.sh, so nothing usable)
-  curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash && break
-  note "nvm download failed (attempt $attempt of 3)."
-  [ "$attempt" -lt 3 ] && sleep 5
-done
-[ -s "$NVM_DIR/nvm.sh" ] || { echo "Couldn't download nvm. Check the connection, then run: bash $0 --from 10" >&2; exit 1; }
-set +eu   # nvm isn't compatible with `set -e` or `set -u`
-. "$NVM_DIR/nvm.sh"
-if [ -f "$REPO_DIR/.nvmrc" ]; then
-  cd "$REPO_DIR" && nvm install; NVM_STATUS=$?; cd - >/dev/null
-else
-  nvm install --lts; NVM_STATUS=$?
+say "Step 10: Node.js, npm packages, Python environment for $PRIMARY_REPO"
+# Node.js is installed system-wide (/usr/bin/node), so claude and Claude Desktop
+# find it without any ~/.bashrc line. NodeSource's apt repository is added by
+# hand (key, source, pin) rather than by piping their setup script into sudo.
+if [ ! -f /etc/apt/sources.list.d/nodesource.sources ] || ! grep -q "node_${NODE_MAJOR}.x" /etc/apt/sources.list.d/nodesource.sources; then
+  sudo install -d -m 755 /etc/apt/keyrings
+  curl -fsSL --retry 3 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo tee /etc/apt/keyrings/nodesource.asc >/dev/null
+  sudo tee /etc/apt/sources.list.d/nodesource.sources >/dev/null <<EOF
+Types: deb
+URIs: https://deb.nodesource.com/node_${NODE_MAJOR}.x
+Suites: nodistro
+Components: main
+Signed-By: /etc/apt/keyrings/nodesource.asc
+EOF
+  # Prefer NodeSource's nodejs over Ubuntu's, which may be a different version.
+  printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' \
+    | sudo tee /etc/apt/preferences.d/nodejs >/dev/null
 fi
-set -eu
-[ "$NVM_STATUS" -eq 0 ] || { echo "nvm couldn't install Node.js." >&2; exit 1; }
-(cd "$REPO_DIR" && npm install)
+sudo apt-get update
+sudo apt-get install -y nodejs   # includes npm
+note "Node.js $(/usr/bin/node -v), npm $(/usr/bin/npm -v)"
+if [ -d "$H/.nvm" ]; then
+  note "An earlier nvm install is in $H/.nvm. While its lines are in $H/.bashrc,"
+  note "your shell uses nvm's Node.js instead of /usr/bin/node. See the guide's Step 10 to remove it."
+fi
+(cd "$PRIMARY_DIR" && PATH="/usr/bin:$PATH" npm install)   # /usr/bin first, so an old nvm Node.js is not used
 
-[ -x "$REPO_DIR/.venv/bin/python" ] || python3 -m venv "$REPO_DIR/.venv"
-"$REPO_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$REPO_DIR/.venv/bin/pip" install "sqlmesh==$SQLMESH_VERSION" "duckdb==$DUCKDB_VERSION"
-VENV_PATH_LINE="export PATH=\"$REPO_DIR/.venv/bin:\$PATH\""
+# Playwright's headless Chromium, for the Compass app screenshots claude takes.
+# The system libraries are installed as root by a clean copy of Playwright from
+# the npm registry, not by the copy in node_modules: claude can write to
+# node_modules, so code from there must never run as root. Only the version
+# number is taken from node_modules, and the check accepts nothing but a version.
+# Anything else after "playwright@" (file:, https:, npm:, github:) would make npm
+# run code from wherever it points.
+PW_VERSION=$(/usr/bin/node -p "require('$PRIMARY_DIR/node_modules/playwright/package.json').version") || PW_VERSION=""
+if [[ "$PW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  note "Installing system libraries for Playwright $PW_VERSION"
+  # From /tmp, so npx doesn't use the repository's copy. -H keeps the clean
+  # copy's cache in /root/.npm, where claude can't reach it.
+  (cd /tmp && sudo -H env PATH="/usr/bin:$PATH" npx --yes "playwright@$PW_VERSION" install-deps chromium-headless-shell)
+else
+  echo "Couldn't read a valid Playwright version from node_modules (got: $PW_VERSION). Check that npm install worked, then run: bash $0 --from 10" >&2
+  exit 1
+fi
+# The browser is downloaded as claude, into claude's ~/.cache/ms-playwright, where
+# Playwright looks by default, so no environment variable is needed. claude's
+# traffic can only leave through Squid, and this non-interactive shell doesn't
+# read claude's ~/.bashrc, so the proxy is set here.
+sudo -u claude -H bash -c "cd '$PRIMARY_DIR' && HTTPS_PROXY=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128 PATH=/usr/bin:\$PATH npx playwright install chromium-headless-shell"
+# Stops Step 10 if any system library is still missing.
+(cd "$PRIMARY_DIR" && PATH="/usr/bin:$PATH" npx playwright install-deps --dry-run chromium-headless-shell)
+
+[ -x "$PRIMARY_DIR/.venv/bin/python" ] || python3 -m venv "$PRIMARY_DIR/.venv"
+"$PRIMARY_DIR/.venv/bin/python" -m pip install --upgrade pip
+"$PRIMARY_DIR/.venv/bin/pip" install "sqlmesh==$SQLMESH_VERSION" "duckdb==$DUCKDB_VERSION"
+VENV_PATH_LINE="export PATH=\"$PRIMARY_DIR/.venv/bin:\$PATH\""
 append_once "$H/.bashrc" "$VENV_PATH_LINE"
 append_once "$CLAUDE_HOME/.bashrc" "$VENV_PATH_LINE" claude
 

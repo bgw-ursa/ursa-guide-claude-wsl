@@ -204,7 +204,7 @@ It also covers:
 When you're done, two accounts share the work:
 
 - **You** edit in VS Code, which connects to WSL over Remote-SSH as your own Linux user. Edits, commits, and GitHub access are yours.
-- **The Claude Code agent** runs in WSL as a separate, restricted `claude` user, limited to the repository you share with it and to approved network destinations.
+- **The Claude Code agent** runs in WSL as a separate, restricted `claude` user, limited to the repositories you share with it and to approved network destinations.
 
 ---
 id: overview
@@ -212,7 +212,7 @@ nav: Overview
 title: What this setup protects
 ---
 
-1. **Dedicated low-privilege user:** the `claude` account can access the repository you explicitly share, but not your normal home directory, SSH keys, or the rest of the machine.
+1. **Dedicated low-privilege user:** the `claude` account can access only the repositories you explicitly share, but not your normal home directory, SSH keys, or the rest of the machine.
 2. **Claude Code sandbox:** `/sandbox` adds filesystem and network isolation around commands the agent runs.
 
 ### Why not just use Claude Desktop or Claude Code on the web?
@@ -231,6 +231,7 @@ For an interactive local workflow on Windows with both a dedicated low-privilege
 >
 > - Install [Claude Desktop](https://claude.ai/download) on Windows. This guide doesn't cover installing it.
 > - **IT:** confirm your Claude seat includes Claude Code, and enable WSL sessions in Claude Desktop. Desktop turns WSL sessions off by default on organization-managed devices; IT turns them on by setting the `disableWslSessions` value under `HKLM\SOFTWARE\Policies\Claude` to `false` (Claude Desktop v1.19367.0 or later).
+> - **Your Git name and email,** for the commits made in `{{REPO}}`. Use the email on your GitHub account, so commits link to you. Write down the exact values; Step 2 asks for them, and they shouldn't be guessed, for example a name from an email address.
 >
 > Claude Desktop runs its Claude Code sessions inside WSL as WSL's default user. Step 8 makes that the restricted `claude` user, and Step 11 confirms it.
 
@@ -283,9 +284,9 @@ Reboot when prompted, then choose a local username and password for Ubuntu.
 
 ---
 id: step2
-nav: 2. Place the repo
+nav: 2. Place the repos
 step: 2
-title: Keep the repository on the Linux filesystem
+title: Keep the repositories on the Linux filesystem
 lead: Use your WSL home directory rather than `/mnt/c/...`. Cross-boundary file access is commonly 5–10× slower and can degrade Claude Code file search, dependency installs, and builds.
 ---
 
@@ -333,15 +334,49 @@ Test the connection. Accept the host fingerprint on first connect; GitHub should
 ssh -T git@github.com
 ```
 
-### Fork and clone the repository
+### Fork and clone the repositories
 
-On GitHub, fork [ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) into your personal Ursa account, `{{GITHUB_USER}}`. Then clone your fork into `~/git`:
+This setup always uses three repositories. Step 4 gives `claude` a different level of access to each:
+
+| Repository | Cloned from | `claude` can |
+|---|---|---|
+| `{{REPO}}` | Your fork | Read and write |
+| `ursa-studio` | Your fork | Read only |
+| `new-forge-helpers` | `ursahealth`, no fork | Nothing |
+
+On GitHub, fork [ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) and [ursahealth/ursa-studio](https://github.com/ursahealth/ursa-studio) into your personal Ursa account, `{{GITHUB_USER}}`. Your account also needs read access to [ursahealth/new-forge-helpers](https://github.com/ursahealth/new-forge-helpers), which you clone directly. Then clone all three into `~/git`:
 
 ```bash title="WSL — your normal user"
 mkdir -p ~/git
 cd ~/git
 git clone git@github.com:{{GITHUB_USER}}/{{REPO}}.git
+git clone git@github.com:{{GITHUB_USER}}/ursa-studio.git
+git clone git@github.com:ursahealth/new-forge-helpers.git
 ```
+
+### Set the Git identity for {{REPO}}
+
+Write your name and email into `{{REPO}}`'s own `.git/config`. That identity applies to everyone who commits in this checkout, so commits by `claude` carry your name too, and Claude Code adds a `Co-Authored-By: Claude` line to mark its commits. Once merged, each person's Claude commits stay distinguishable. Your global Git config isn't changed.
+
+- **Name:** your name, as you want it on commits.
+- **Email:** the one on your GitHub account, so GitHub links the commits to you.
+
+Use the values from the **Prerequisites** in the Overview. Don't guess them from each other, for example a name from an email address. The block asks for both, then shows the result:
+
+```bash title="WSL — your normal user"
+{
+  read -rp "Your name for git commits: " GIT_NAME
+  read -rp "Your email for git commits (the one on your GitHub account): " GIT_EMAIL
+  git -C ~/git/{{REPO}} config --local user.name "$GIT_NAME"
+  git -C ~/git/{{REPO}} config --local user.email "$GIT_EMAIL"
+  git -C ~/git/{{REPO}} config --local --get-regexp '^user\.'
+}
+```
+
+The braces make the shell read the whole block before running it, so the prompts wait for your typing instead of taking the next pasted line as an answer.
+
+> [!NOTE]
+> Run this from your own terminal. Claude Code's sandbox blocks writes to `.git/config` on purpose, so `claude` can't change the identity itself. Pushing stays with you, because `claude` has no GitHub credentials.
 
 ---
 id: step3
@@ -388,25 +423,66 @@ source ~/.bashrc
 
 ---
 id: step4
-nav: 4. Share repo access
+nav: 4. Set repo access
 step: 4
-title: Grant both accounts access to the repository
+title: Set what claude can reach in your repositories
 ---
 
-These commands share only `~/git/{{REPO}}` with `claude`, not the rest of `~/git`. They apply recursively to everything already in the repository, and files and folders added to it later are shared automatically. Other repositories in `~/git` aren't shared: `claude` can't change them, though with Ubuntu's default permissions it can still read them.
+`claude` gets in only through the `agentic` group, and each repository gets its own level of access. The rest of `~/git` stays closed to `claude`, including folders you add there later.
+
+Permissions alone would cover files that exist now. For files created later, each folder also gets a *default ACL*: a rule stored on the folder that gives new files and folders the same access, whichever program creates them. `umask 002` in `.bashrc` (below) only reaches programs started from a terminal; Claude Desktop doesn't start one, so without the ACL its new files would be readable but not writable by the group. The ACL has only owner, group and other entries, so there's no ACL mask to manage.
+
+### Install the ACL tools
+
+`setfacl` and `getfacl` come in Ubuntu's `acl` package:
 
 ```bash title="WSL — your normal user"
-# Group-own the repository and everything in it
-sudo chgrp -R agentic ~/git/{{REPO}}
-
-# Give the group read/write access. Capital X adds execute only where appropriate.
-sudo chmod -R g+rwX ~/git/{{REPO}}
-
-# New files and directories in the repository inherit the agentic group.
-sudo find ~/git/{{REPO}} -type d -exec chmod g+s {} +
+sudo apt update && sudo apt install -y acl
 ```
 
-### Make new files group-writable by default
+### Close your home and `~/git` to `claude`
+
+```bash title="WSL — your normal user"
+chmod o+x /home/{{USERNAME}}
+chmod 711 ~/git
+setfacl -d -m u::rwx,g::rx,o::--- ~/git
+```
+
+- `o+x` on your home and `711` on `~/git` let `claude` pass through to the repositories it's allowed, but not list either folder, so it can't see what else is there.
+- The default ACL on `~/git` closes any folder created there later, such as a new clone, to `claude`. A folder you *move* in with `mv` keeps its old permissions, so check those.
+
+### `{{REPO}}`: read and write
+
+```bash title="WSL — your normal user"
+sudo chgrp -R agentic ~/git/{{REPO}}
+sudo chmod -R g+rwX,o-rwx ~/git/{{REPO}}
+sudo find ~/git/{{REPO}} -type d -exec chmod g+s {} +
+sudo find ~/git/{{REPO}} -type d -exec setfacl -d -m u::rwX,g::rwX,o::--- {} +
+```
+
+In order: the `agentic` group owns everything; the group can read and write (capital `X` adds execute only to folders and to files that are already executable) and others get nothing; setgid on every folder makes new files join `agentic`; and the default ACL keeps new files group-writable.
+
+### `ursa-studio`: read only
+
+```bash title="WSL — your normal user"
+sudo chgrp -R agentic ~/git/ursa-studio
+sudo chmod -R g+rX,g-w,o-rwx ~/git/ursa-studio
+sudo find ~/git/ursa-studio -type d -exec chmod g+s {} +
+sudo find ~/git/ursa-studio -type d -exec setfacl -d -m u::rwX,g::rX,o::--- {} +
+```
+
+The same as above, but the group can only read. The default ACL also holds for files you create: your own `umask 002` would otherwise make them group-writable.
+
+### `new-forge-helpers`: no access
+
+```bash title="WSL — your normal user"
+chmod -R g-w,o-rwx ~/git/new-forge-helpers
+find ~/git/new-forge-helpers -type d -exec setfacl -d -m u::rwX,g::rX,o::--- {} +
+```
+
+The repository keeps your own group, which `claude` isn't in, and others get nothing, so `claude` can't open the folder at all. You keep full access, so you can run its scripts and `git pull`.
+
+### Make new files group-writable in terminals
 
 ```bash title="WSL — your normal user"
 # Your account
@@ -416,41 +492,41 @@ echo 'umask 002' >> ~/.bashrc
 echo 'umask 002' | sudo tee -a /home/claude/.bashrc
 ```
 
-### Allow path traversal into your home directory
+Inside the repositories, the default ACLs already decide access. This covers files that terminals create elsewhere.
+
+### Show the shared repositories in `claude`'s home
+
+Claude Desktop's WSL folder picker browses as `claude` and starts in `claude`'s home. Because `claude` can't list your home directory, it can't click through to the repositories from there, and you don't want to loosen that. A symlink in `claude`'s home doesn't solve this: the picker doesn't show symlinks as folders it can open. Instead, bind-mount each shared repository into `claude`'s `git` folder, so the paths mirror the real ones: `/home/{{USERNAME}}/git/{{REPO}}` appears as `/home/claude/git/{{REPO}}`. Both paths show the same files. `ursa-studio` is mounted read-only, as a second lock on top of its permissions; `new-forge-helpers` isn't mounted.
+
+Add the mounts to `/etc/fstab`, so they come back after every WSL restart:
 
 ```bash title="WSL — your normal user"
-chmod o+x /home/{{USERNAME}}
+sudo tee -a /etc/fstab >/dev/null <<'EOF'
+/home/{{USERNAME}}/git/{{REPO}} /home/claude/git/{{REPO}} none bind 0 0
+/home/{{USERNAME}}/git/ursa-studio /home/claude/git/ursa-studio none bind,ro 0 0
+EOF
 ```
 
-This grants traverse permission only; it does not let the `claude` user list your home directory contents.
-
-### Show the repository in `claude`'s home
-
-Claude Desktop's WSL folder picker browses as `claude` and starts in `claude`'s home. Because `claude` can't list your home directory, it can't click through to the repository from there. A symlink in `claude`'s home doesn't solve this: the picker doesn't show symlinks as folders it can open. Instead, bind-mount the repository into `claude`'s home, so it appears there as a normal folder. Both paths show the same files.
-
-Create an empty folder and mount the repository onto it:
+Create the empty folders as `claude`, then mount them now:
 
 ```bash title="WSL — your normal user"
-sudo mkdir /home/claude/{{REPO}}
-sudo mount --bind /home/{{USERNAME}}/git/{{REPO}} /home/claude/{{REPO}}
+sudo -u claude mkdir -p /home/claude/git/{{REPO}} /home/claude/git/ursa-studio
+sudo mount /home/claude/git/{{REPO}}
+sudo mount /home/claude/git/ursa-studio
 ```
 
-Make the mount come back after WSL restarts by adding it to `/etc/fstab`:
+`mount` reads the options, including `ro`, from `/etc/fstab`. WSL applies `/etc/fstab` at startup, and that stays on in Step 8: turning off `[automount]` stops only the Windows drive mounts.
 
-```bash title="WSL — your normal user"
-echo '/home/{{USERNAME}}/git/{{REPO}} /home/claude/{{REPO}} none bind 0 0' | sudo tee -a /etc/fstab
-```
-
-WSL applies `/etc/fstab` at startup. That stays on in Step 8: turning off `[automount]` stops only the Windows drive mounts, not `/etc/fstab`.
-
-### Mark the repository as safe for Git
+### Mark the shared repositories as safe for Git
 
 ```bash title="WSL — your normal user"
 sudo -u claude git config --global --add safe.directory '/home/{{USERNAME}}/git/{{REPO}}'
-sudo -u claude git config --global --add safe.directory '/home/claude/{{REPO}}'
+sudo -u claude git config --global --add safe.directory '/home/claude/git/{{REPO}}'
+sudo -u claude git config --global --add safe.directory '/home/{{USERNAME}}/git/ursa-studio'
+sudo -u claude git config --global --add safe.directory '/home/claude/git/ursa-studio'
 ```
 
-The second entry covers the bind-mounted path, which Claude Desktop sessions use.
+The `/home/claude/git` entries cover the bind-mounted paths, which Claude Desktop sessions use.
 
 ---
 id: step5
@@ -536,13 +612,15 @@ cache deny all
 EOF
 ```
 
-The allowlist starts with only the domains Claude Code needs. Uncomment others as your workflow requires them:
+The allowlist starts with only the domains Claude Code and Step 10 need. Uncomment others as your workflow requires them:
 
 ```bash title="WSL — your normal user"
 sudo tee /etc/squid/allowed-domains.txt >/dev/null <<'EOF'
 .anthropic.com
 .claude.ai
 .claude.com
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
 #.github.com
 #.githubusercontent.com
 #registry.npmjs.org
@@ -906,30 +984,44 @@ lead: Run these in WSL as your normal user, from the VS Code Remote-SSH terminal
 >
 > **For IT:** add the new user to the current New-Forge IAM group, [`ursa-forge-group`](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/groups/details/ursa-forge-group).
 
-### Install Node.js with nvm
+### Install Node.js system-wide
 
-Install Node.js with nvm (Node Version Manager) as your normal user, not with `sudo apt install nodejs npm`. nvm installs Node.js in your home directory, so installing npm packages never needs `sudo`, and you can switch Node.js versions easily. npm comes with Node.js, so there is no separate npm install.
+Install Node.js once for the whole system, from NodeSource's apt repository. It lands in `/usr/bin`, so both your account and `claude` find `node` and `npm` without any `~/.bashrc` line, and that includes Claude Desktop sessions. npm comes with Node.js, so there's no separate npm install. The `26` in the source is the Node.js major version, the current long-term-support release.
 
-```bash title="WSL — your normal user"
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh | bash
-```
-
-Reload your shell so the `nvm` command is available, then install the current long-term-support release:
+Add NodeSource's signing key, its package source, and a pin that prefers its `nodejs` over Ubuntu's:
 
 ```bash title="WSL — your normal user"
-source ~/.bashrc
-nvm install --lts
+sudo install -d -m 755 /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo tee /etc/apt/keyrings/nodesource.asc >/dev/null
+sudo tee /etc/apt/sources.list.d/nodesource.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://deb.nodesource.com/node_26.x
+Suites: nodistro
+Components: main
+Signed-By: /etc/apt/keyrings/nodesource.asc
+EOF
+printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/nodejs >/dev/null
 ```
 
-Confirm both are installed:
+Install Node.js:
+
+```bash title="WSL — your normal user"
+sudo apt update && sudo apt install -y nodejs
+```
+
+Confirm both accounts find the same version:
 
 ```bash title="WSL — your normal user"
 node -v
 npm -v
+sudo -u claude -H node -v
 ```
 
+> [!NOTE]
+> Updates come with your normal `sudo apt update && sudo apt upgrade`. Project packages from `npm install` never need `sudo`; only global installs (`npm install -g`) do.
+
 > [!TIP]
-> If New-Forge has an `.nvmrc` file, run `nvm install` inside `~/git/{{REPO}}` instead to get the exact version the project expects.
+> If this WSL instance already has Node.js from nvm (an older version of this guide), your shell still uses that one, because nvm's lines in `~/.bashrc` put it first on your `PATH`. Run `which node`. If it shows a path under `~/.nvm`, remove nvm with `rm -rf ~/.nvm`, delete the three lines that mention `NVM_DIR` from `~/.bashrc`, then open a new terminal and run `which node` again; it should show `/usr/bin/node`. Then run `npm install` again in `~/git/{{REPO}}`, so the packages are rebuilt for the system Node.js.
 
 ### Install the project dependencies
 
@@ -939,6 +1031,52 @@ Run `npm install` so the project and its scripts are usable:
 cd ~/git/{{REPO}}
 npm install
 ```
+
+### Install Playwright for app screenshots
+
+Claude checks Compass apps by taking screenshots in a headless Chromium browser. Playwright, the browser-automation library the project uses, is already in `node_modules` from `npm install`. Chromium needs two more things:
+
+1. **System libraries**, such as fonts and graphics libraries, installed as root through apt. Normally `npx playwright install --with-deps` does this, but it would run Playwright from `node_modules` as root, and `claude` can write to `node_modules`. Instead, a clean copy of the same Playwright version is downloaded from npm and run as root. Only the version number comes from `node_modules`.
+2. **The browser**, downloaded as `claude` into `claude`'s `~/.cache/ms-playwright`, where Playwright looks by default. Claude's own sandbox can't write there, so you run this step for it. The command names the proxy because `claude`'s traffic can only leave through Squid.
+
+Install the system libraries:
+
+```bash title="WSL — your normal user"
+PW_VERSION=$(node -p "require('$HOME/git/{{REPO}}/node_modules/playwright/package.json').version")
+if [[ "$PW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "Installing system libraries for Playwright $PW_VERSION"
+  (cd /tmp && sudo -H env PATH="/usr/bin:$PATH" npx --yes "playwright@$PW_VERSION" install-deps chromium-headless-shell)
+else
+  echo "Couldn't read a valid Playwright version from node_modules (got: $PW_VERSION)" >&2
+fi
+```
+
+Why each piece is there:
+- **The version check** lets only a version number through. npm reads whatever follows `playwright@` as a package source, and it also accepts a folder (`file:`), a web address (`https:`), another package (`npm:`) or a repository (`github:`). Unchecked, a value written by `claude` could make your `sudo` run its code.
+- **`cd /tmp`** makes `npx` download a clean copy. From inside the repository it would use the project's copy instead.
+- **`-H`** keeps the clean copy's cache in `/root/.npm`, where `claude` can't reach it.
+- **`PATH="/usr/bin:$PATH"`** makes sure the system Node.js runs it.
+
+Download the browser as `claude`:
+
+```bash title="WSL — your normal user"
+sudo -u claude -H bash -c 'cd ~/git/{{REPO}} && HTTPS_PROXY=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128 PATH=/usr/bin:$PATH npx playwright install chromium-headless-shell'
+```
+
+Check that nothing is missing. It should print `All system dependencies are installed.`:
+
+```bash title="WSL — your normal user"
+cd ~/git/{{REPO}} && PATH="/usr/bin:$PATH" npx playwright install-deps --dry-run chromium-headless-shell
+```
+
+> [!NOTE]
+> If you use the Squid allowlist, it must include `cdn.playwright.dev` and `playwright.download.prss.microsoft.com` (Playwright's fallback mirror), because the browser download runs as `claude`.
+
+> [!NOTE]
+> Chromium doesn't read `HTTPS_PROXY` from the environment. App screenshots load only local pages, so they're not affected. A script that opens an outside site has to pass the proxy to Chromium itself, for example `chromium.launch({ proxy: { server: 'http://127.0.0.1:3128' } })`. Otherwise the page load fails, because `claude` can't connect directly.
+
+> [!TIP]
+> When the project upgrades Playwright, run all three blocks again. The new version is picked up automatically.
 
 ### Install Python, pip and venv
 
@@ -1047,7 +1185,7 @@ lead: Confirm that Claude Desktop's Claude Code sessions run inside WSL as the r
 
 1. In Claude Desktop, open the **Code** tab and start a new session.
 2. In the environment selector under the prompt box, choose your Ubuntu distribution under **WSL**.
-3. Choose the session's folder. Claude Desktop opens a Windows folder dialog that browses inside WSL as `claude`, starting in `claude`'s home, `/home/claude`. Open the `{{REPO}}` folder there, which is the bind mount from Step 4, and select it. Don't browse to `/home/{{USERNAME}}`; `claude` can't list your home, so the repository can't be reached that way.
+3. Choose the session's folder. Claude Desktop opens a Windows folder dialog that browses inside WSL as `claude`, starting in `claude`'s home, `/home/claude`. Open `git`, then the `{{REPO}}` folder, which is the bind mount from Step 4, and select it. `ursa-studio` is in the same `git` folder, mounted read-only; `new-forge-helpers` isn't there at all. Don't browse to `/home/{{USERNAME}}`; `claude` can't list your home, so the repository can't be reached that way.
 4. Trust the folder when asked.
 
 The first session in a distribution takes a little longer while Claude sets up inside it.
@@ -1105,8 +1243,8 @@ title: Day-to-day terminal use
 ---
 
 - [x] Edit files in VS Code or another editor as your normal user.
-- [x] Run Claude Code as the `claude` user, confined to the repository.
-- [x] Shared group ownership, setgid directories, and `umask 002` keep files writable by both accounts.
+- [x] Run Claude Code as the `claude` user, confined to the repositories you share with it.
+- [x] Shared group ownership, setgid directories, and default ACLs keep `{{REPO}}` writable by both accounts.
 
 Add this shortcut to your normal account's `~/.bashrc`:
 
@@ -1123,7 +1261,7 @@ cc
 
 ### Copy files between Windows and WSL
 
-Copy files over SSH as your normal user, through the `wsl` host entry from Step 9. Files you copy this way belong to you, and `claude` can't read them unless they're in the repository. WSL must be running, as for VS Code.
+Copy files over SSH as your normal user, through the `wsl` host entry from Step 9. Files you copy this way belong to you, and `claude` can't read them unless they're in a repository you share with it. WSL must be running, as for VS Code.
 
 Make a transfer folder in your home, once:
 
@@ -1147,7 +1285,7 @@ title: Notes and gotchas
 
 - **Keep secrets outside the repository.** The agent has full access to its working tree, and Git hooks may execute during Git operations.
 - **Do not run Claude Code from native PowerShell.** The Linux sandbox described here does not apply there.
-- **Build-tool permissions should remain stable.** Setgid plus `umask 002` keeps files created by tools such as `npm install` and Next.js builds group-writable. Because this setup uses group inheritance rather than ACLs, there is no ACL mask to collapse and usually nothing to repair afterward.
+- **Build-tool permissions should remain stable.** Setgid plus the default ACLs from Step 4 keep files created by tools such as `npm install` and Next.js builds group-writable, however the tool was started. The ACLs have only owner, group and other entries, with no per-user entries, so there is no ACL mask to collapse and usually nothing to repair afterward.
 - **Enterprise enforcement is possible.** Organization administrators can centrally require the sandbox rather than leaving it as a per-developer choice, using managed settings such as `enabled` and `failIfUnavailable`.
 - **Windows Git Credential Manager won't work from WSL.** With interop disabled, a Git `credential.helper` that points at the Windows `git-credential-manager.exe` can't run. Use SSH keys or a Linux-side credential helper instead.
 - **Usage limits are shared.** CLI, desktop, and web sessions draw from the same account usage allowance.
@@ -1244,7 +1382,7 @@ Anthropic ships Claude Code as one product on several surfaces (terminal, IDE, d
     title: 'Running Claude Code Safely in WSL2',
     description: "A readable, interactive setup guide using a dedicated low-privilege Linux user plus Claude Code's built-in sandbox.",
     defaultUsername: 'your-wsl-username',
-    defaultRepo: 'your-repository',
+    defaultRepo: 'new-forge',
     defaultGithubUser: 'yourname-ursa',
   };
 
@@ -1595,7 +1733,7 @@ Anthropic ships Claude Code as one product on several surfaces (terminal, IDE, d
         '<p class="config-note">Change these values once. Every affected path and command below updates automatically.</p>' +
         '<div class="fields">' +
           '<label>WSL username<input data-field="username" spellcheck="false" autocomplete="off"></label>' +
-          '<label>Repository name<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
+          '<label>Main repository<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
           '<label>GitHub username<input data-field="github" spellcheck="false" autocomplete="off"></label>' +
         '</div>' +
         '<div class="path-preview">Resolved repository path: <strong data-path-preview></strong></div>' +

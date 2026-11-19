@@ -194,7 +194,17 @@ nav: Introduction
 title: About this guide
 ---
 
-This is the scripted version of the [full setup guide](index.html). It ends with the same setup: Claude Code runs in WSL as a restricted `claude` user behind a proxy and the Claude Code sandbox, and you edit in VS Code as your normal user. A script, `setup-wsl.sh`, runs inside Ubuntu and does Steps 2 to 10 of the full guide, so this guide has fewer steps. The Windows side of connecting VS Code stays manual: a few PowerShell commands in Steps 2 and 5.
+This is the scripted version of the [full setup guide](index.html). It ends with the same setup: Claude Code runs in WSL as a restricted `claude` user behind a proxy and the Claude Code sandbox, and you edit in VS Code as your normal user. A script, `setup-wsl.sh`, runs inside Ubuntu and does Steps 2 to 10 of the full guide, so this guide has fewer steps.
+
+The setup always includes three repositories, each with its own access for `claude`:
+
+| Repository | Cloned from | `claude` can | You can |
+|---|---|---|---|
+| `{{REPO}}` | Your fork | Read and write | Read and write |
+| `ursa-studio` | Your fork | Read only | Read and write |
+| `new-forge-helpers` | `ursahealth`, no fork | Nothing; it can't open the folder | Read, write and run its scripts |
+
+Any other folder that appears in `~/git` later is closed to `claude` too. To change the set, edit the `REPOS` list at the top of `setup-wsl.sh`. The Windows side of connecting VS Code stays manual: a few PowerShell commands in Steps 2 and 5.
 
 The full guide stays as the reference: it explains each setting the script applies, and you can follow it by hand instead.
 
@@ -288,21 +298,22 @@ Copy it now: once the script finishes and WSL restarts, WSL can no longer see yo
 ### Run it
 
 ```bash title="WSL — your normal user"
-REPO={{REPO}} GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
+GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
 ```
 
-The values in front of `bash` come from **Customize this guide**. They apply to this one run.
+The value in front of `bash` comes from **Customize this guide**. It applies to this one run.
 
-The script stops four times for your input:
+The script stops five times for your input:
 
 1. **Your Ubuntu password,** once, for `sudo`.
 2. **GitHub,** if GitHub doesn't accept the new SSH key yet. The script prints the key, copies it to your Windows clipboard, and waits. In a browser, signed in as `{{GITHUB_USER}}`:
    1. Open **Settings → SSH and GPG keys → New SSH key** and paste the key with **Ctrl+V**. If you've copied something else since, type `c` and press **Enter** at the script's prompt to copy the key again.
-   2. Fork [ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) into `{{GITHUB_USER}}` if you haven't already.
+   2. Fork [ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) and [ursahealth/ursa-studio](https://github.com/ursahealth/ursa-studio) into `{{GITHUB_USER}}` if you haven't already.
 
-   Then press **Enter**. The script tests the connection again and clones the repository once it works.
-3. **VS Code key:** paste the `ssh-ed25519` line from Step 2. The script adds it to your `~/.ssh/authorized_keys`. Leave it blank to skip; the script then tells you how to add it later.
-4. **AWS keys:** paste the access key ID, then the secret access key. The secret stays hidden while you paste. Afterward the script shows only its length and last 4 characters. If either value has the wrong format, it asks again. Leave the key ID blank to skip AWS for now.
+   Then press **Enter**. The script tests the connection again, then clones the three repositories. If a fork is missing, or your account can't read [ursahealth/new-forge-helpers](https://github.com/ursahealth/new-forge-helpers), it says which one and waits for **Enter** again.
+3. **Git name and email,** for commits in `{{REPO}}`. Type them exactly as gathered in Appendix A. On a re-run, the script keeps the values already set and doesn't ask. The script writes them into `{{REPO}}`'s own `.git/config`, so commits by `claude` carry your name too, and Claude Code marks them with a `Co-Authored-By: Claude` line.
+4. **VS Code key:** paste the `ssh-ed25519` line from Step 2. The script adds it to your `~/.ssh/authorized_keys`. Leave it blank to skip; the script then tells you how to add it later.
+5. **AWS keys:** paste the access key ID, then the secret access key. The secret stays hidden while you paste. Afterward the script shows only its length and last 4 characters. If either value has the wrong format, it asks again. Leave the key ID blank to skip AWS for now.
 
 Everything else runs on its own. When it's done, the script prints the remaining manual steps, which are Steps 4 to 7 below.
 
@@ -310,29 +321,29 @@ Everything else runs on its own. When it's done, the script prints the remaining
 
 | Full guide step | What the script does |
 |---|---|
-| 2 | Creates a GitHub SSH key with no passphrase, and clones your fork into `~/git/{{REPO}}` |
+| 2 | Creates a GitHub SSH key with no passphrase, clones the three repositories into `~/git`, and sets your Git name and email in `{{REPO}}` |
 | 3 | Creates the `agentic` group and the `claude` user |
-| 4 | Shares the repository with `claude`, and mounts it at `/home/claude/{{REPO}}` |
-| 5 | Installs Claude Code for `claude`, and makes `claude`'s shells start in the repository |
+| 4 | Gives `claude` its access to each repository, closes the rest of `~/git` to it, and mounts `{{REPO}}` and `ursa-studio` (read-only) under `/home/claude/git` |
+| 5 | Installs Claude Code for `claude`, and makes `claude`'s shells start in `{{REPO}}` |
 | 6 | Sets up the Squid proxy and the iptables rules |
 | 7 | Installs the sandbox tools and the managed settings |
 | 8 | Writes `/etc/wsl.conf`, which takes effect after the restart in Step 4 |
 | 9 | Sets up the SSH server for VS Code, and authorizes the VS Code key |
-| 10 | Installs Node.js, the npm packages, the Python environment with SQLMesh and DuckDB, and your AWS credentials |
+| 10 | Installs Node.js system-wide (so `claude` has it too), the npm packages, Playwright's headless Chromium and the Python environment with SQLMesh and DuckDB for `{{REPO}}`, and your AWS credentials |
 
 ### Settings
 
 | Setting | Default | How to change it |
 |---|---|---|
-| `REPO` | `new-forge` | Put it in front of the command, as above |
 | `GITHUB_USER` | None; the script asks for it | Put it in front of the command, as above |
 | `SQUID_MODE` | `open`: `claude` can reach any domain through the proxy | Put `SQUID_MODE=allowlist` in front of the command to allow only the domains in `/etc/squid/allowed-domains.txt` |
 | Node.js, SQLMesh and DuckDB versions | The versions in the full guide | Edit the settings block at the top of `setup-wsl.sh` |
+| Repositories and `claude`'s access to each | The three above | Edit `REPOS` at the top of `setup-wsl.sh`, then run it with `--only 2` to clone new ones and `--only 4` to apply access |
 
 For example, the production allowlist:
 
 ```bash title="WSL — your normal user"
-SQUID_MODE=allowlist REPO={{REPO}} GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
+SQUID_MODE=allowlist GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
 ```
 
 ### If the script stops with an error
@@ -340,7 +351,7 @@ SQUID_MODE=allowlist REPO={{REPO}} GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.
 Each step prints a heading such as `==> Step 10: Node.js, npm packages, Python environment`. Fix the cause, then start again at the step that failed by adding `--from` and that step's number. For example, for Step 10:
 
 ```bash title="WSL — your normal user"
-REPO={{REPO}} GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh --from 10
+GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh --from 10
 ```
 
 The script skips the earlier steps and runs the failed step and every step after it. The steps run in this order: `packages 2 3 4 5 6 7 9 10 8`. Step 8 runs last on purpose: it makes `claude` the default user and turns off your Windows drives at the next restart, so it only runs once everything else has succeeded. Starting at `--from 10` therefore runs Steps 10 and 8.
@@ -379,7 +390,7 @@ WSL now opens as `claude` by default, without access to your Windows drives.
 > Run the script again; it skips what's already done:
 >
 > ```bash title="WSL — your normal user"
-> REPO={{REPO}} GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
+> GITHUB_USER={{GITHUB_USER}} bash ~/setup-wsl.sh
 > ```
 >
 > Then exit to PowerShell:
@@ -484,7 +495,7 @@ lead: Confirm that Claude Desktop's Claude Code sessions run inside WSL as the r
 
 1. In Claude Desktop, open the **Code** tab and start a new session.
 2. In the environment selector under the prompt box, choose your Ubuntu distribution under **WSL**.
-3. Choose the session's folder. Claude Desktop opens a Windows folder dialog that browses inside WSL as `claude`, starting in `claude`'s home, `/home/claude`. Open the `{{REPO}}` folder there, which is the mount the script created, and select it. Don't browse to `/home/{{USERNAME}}`; `claude` can't list your home, so the repository can't be reached that way.
+3. Choose the session's folder. Claude Desktop opens a Windows folder dialog that browses inside WSL as `claude`, starting in `claude`'s home, `/home/claude`. Open `git`, then the `{{REPO}}` folder, which is the mount the script created, and select it. `ursa-studio` is in the same `git` folder, mounted read-only; `new-forge-helpers` isn't there at all. Don't browse to `/home/{{USERNAME}}`; `claude` can't list your home, so the repository can't be reached that way.
 4. Trust the folder when asked.
 
 The first session in a distribution takes a little longer while Claude sets up inside it.
@@ -552,6 +563,8 @@ All the values you enter or choose during setup, roughly in the order you need t
 | `disableWslSessions` = `false` | Registry value under `HKLM\SOFTWARE\Policies\Claude` | **Windows**: registry, set by IT | Turns on WSL sessions in Claude Desktop v1.19367.0 or later |
 | Claude seat that includes Claude Code | Your Ursa Claude account | **Web**: claude.ai, with IT confirming | Used to sign in the `claude` account in Step 6 |
 | GitHub username (personal Ursa account) | `{{GITHUB_USER}}` | **Web**: github.com account | Becomes `GITHUB_USER` |
+| Git name | `Jane Smith` | **You**: your name as you want it on commits | Gather it beforehand; the script asks for it in Step 3 and never guesses it, for example from your email |
+| Git email | The email on your GitHub account | **Web**: github.com, **Settings → Emails** | The script asks for it in Step 3. GitHub links commits to you through it. Never inferred |
 | AWS IAM user for New-Forge | Access key ID `AKIA…` (20 characters) and secret (40 characters) | **Web**: AWS IAM console, created by IT and added to `ursa-forge-group` | IT gives you the two keys; you paste them in Step 3 |
 
 ### This guide
@@ -559,7 +572,7 @@ All the values you enter or choose during setup, roughly in the order you need t
 | Value | Example / default | Where | Notes |
 |---|---|---|---|
 | WSL username | `{{USERNAME}}` | **Browser**: "Customize this guide" on this page | Must match the Ubuntu username you create in Step 1 |
-| Repository name | `{{REPO}}` | **Browser**: same form | Fills in `REPO` in the commands |
+| Main repository | `{{REPO}}` | **Browser**: same form | The read-and-write repository shells start in. Must match `PRIMARY_REPO` in the script |
 | GitHub username | `{{GITHUB_USER}}` | **Browser**: same form | Fills in `GITHUB_USER` in the commands |
 
 ### Step 1: install WSL and Ubuntu
@@ -585,19 +598,20 @@ Run in the Ubuntu terminal as your normal user.
 
 | Value | Example / default | Where | Notes |
 |---|---|---|---|
-| `REPO` | Default `new-forge` | **WSL**: in front of the command | Optional |
 | `GITHUB_USER` | No default | **WSL**: in front of the command, or the script's prompt | Required; the script asks if it's missing |
 | `SQUID_MODE` | `open` (default) or `allowlist` | **WSL**: in front of the command | `allowlist` is for production |
 | `--from STEP`, `--only STEP`, `--list` | `--from 10` | **WSL**: after the command | Optional. STEP is one of `packages 2 3 4 5 6 7 9 10 8` |
 | `sudo` password | Your Ubuntu password | **WSL**: script prompt | Asked once |
 | GitHub SSH public key | `ssh-ed25519 AAAA… {{GITHUB_USER}}@wsl` | **WSL**: the script prints it. **Web**: paste it at github.com → Settings → SSH and GPG keys → New SSH key | No passphrase. Any title works |
-| Fork of the repository | `github.com/{{GITHUB_USER}}/{{REPO}}` | **Web**: [github.com/ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) → **Fork**, owner `{{GITHUB_USER}}` | The script clones your fork |
+| Forks | `github.com/{{GITHUB_USER}}/{{REPO}}` and `github.com/{{GITHUB_USER}}/ursa-studio` | **Web**: [ursahealth/{{REPO}}](https://github.com/ursahealth/{{REPO}}) and [ursahealth/ursa-studio](https://github.com/ursahealth/ursa-studio) → **Fork**, owner `{{GITHUB_USER}}` | The script clones your forks |
+| Access to `new-forge-helpers` | Read access for `{{GITHUB_USER}}` | **Web**: [ursahealth/new-forge-helpers](https://github.com/ursahealth/new-forge-helpers), granted by a repository admin | Cloned directly, without a fork |
+| `REPOS`, `UPSTREAM_ORG`, `PRIMARY_REPO` | The three repositories, `ursahealth`, `new-forge` | **WSL**: top of `setup-wsl.sh` | Change only by editing the file |
 | Press Enter to retest GitHub | n/a | **WSL**: script prompt | Repeats until GitHub accepts the key |
 | VS Code public key | The `ssh-ed25519` line from Step 2 | **WSL**: script prompt | Added to `~/.ssh/authorized_keys`. Leave blank to skip; add it later with `--only 9` |
 | AWS access key ID | `AKIA` plus 16 characters | **WSL**: script prompt | Leave blank to skip. Saved in `~/.aws/credentials` under `[default]` |
 | AWS secret access key | 40 characters | **WSL**: script prompt, hidden | The script shows only its length and last 4 characters |
-| `NVM_VERSION`, `SQLMESH_VERSION`, `DUCKDB_VERSION` | `v0.40.8`, `0.235.4`, `1.5.6` | **WSL**: settings block at the top of `setup-wsl.sh` | Change only by editing the file |
-| Allowed domains | `.anthropic.com`, `.claude.ai`, `.claude.com` | **WSL**: `/etc/squid/allowed-domains.txt` | Used only with `SQUID_MODE=allowlist`. The script creates the file once and never overwrites it |
+| `NODE_MAJOR`, `SQLMESH_VERSION`, `DUCKDB_VERSION` | `26`, `0.235.4`, `1.5.6` | **WSL**: settings block at the top of `setup-wsl.sh` | Change only by editing the file |
+| Allowed domains | `.anthropic.com`, `.claude.ai`, `.claude.com`, `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` | **WSL**: `/etc/squid/allowed-domains.txt` | Used only with `SQUID_MODE=allowlist`. The script creates the file once and never overwrites it |
 
 ### Step 5: connect VS Code
 
@@ -621,7 +635,7 @@ Run in PowerShell, not as Administrator.
 | Value | Example / default | Where | Notes |
 |---|---|---|---|
 | Environment | Your Ubuntu distribution, under **WSL** | **Windows**: Claude Desktop → Code tab → environment selector | |
-| Session folder | `/home/claude/{{REPO}}` | **Windows**: Claude Desktop folder dialog | The mount the script created. Don't browse to `/home/{{USERNAME}}` |
+| Session folder | `/home/claude/git/{{REPO}}` | **Windows**: Claude Desktop folder dialog | The mount the script created. `ursa-studio` is there too, read-only. Don't browse to `/home/{{USERNAME}}` |
 
 ### Set by the script (for reference)
 
@@ -652,7 +666,7 @@ Run in PowerShell, not as Administrator.
     title: 'Running Claude Code Safely in WSL2: Scripted Setup',
     description: 'The same setup as the full guide, with a script doing most of the steps.',
     defaultUsername: 'your-wsl-username',
-    defaultRepo: 'your-repository',
+    defaultRepo: 'new-forge',
     defaultGithubUser: 'yourname-ursa',
   };
 
@@ -1003,7 +1017,7 @@ Run in PowerShell, not as Administrator.
         '<p class="config-note">Change these values once. Every affected path and command below updates automatically.</p>' +
         '<div class="fields">' +
           '<label>WSL username<input data-field="username" spellcheck="false" autocomplete="off"></label>' +
-          '<label>Repository name<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
+          '<label>Main repository<input data-field="repo" spellcheck="false" autocomplete="off"></label>' +
           '<label>GitHub username<input data-field="github" spellcheck="false" autocomplete="off"></label>' +
         '</div>' +
         '<div class="path-preview">Resolved repository path: <strong data-path-preview></strong></div>' +
